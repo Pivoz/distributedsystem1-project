@@ -36,11 +36,12 @@ public class Main {
         coordinator.tell(start, null);*/
 
         try {
-            System.out.println(">>> Press ENTER to exit <<<");
+            System.out.println("--- Press any key to terminate ---");
             System.in.read();
         }
         catch (IOException ignored) {}
 
+        //Terminate the system and close the log file
         Logger.getInstance().close();
         system.terminate();
     }

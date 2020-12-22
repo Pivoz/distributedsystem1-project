@@ -19,6 +19,9 @@ public class Logger {
     }
 
     public static Logger getInstance(String filePath){
+        if (filePath == null && instance == null)
+            throw new NullPointerException();
+
         if (instance == null)
             instance = new Logger(filePath);
 
@@ -26,21 +29,30 @@ public class Logger {
     }
 
     public static Logger getInstance(){
-        if (instance == null)
-            throw new NullPointerException();
-
-        return instance;
+        return getInstance(null);
     }
 
-    public void log(String coordinatorID, String text){
+    public void log(String rawString){
         if (fOut == null)
             throw new NullPointerException();
 
         try {
-            fOut.write(coordinatorID + " --- " + text + "\n");
+            fOut.write(rawString + "\n");
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public void logReplicaUpdate(String replicaID, int epoch, int seqNumber, String value){
+        this.log("Replica " + replicaID + " update " + epoch + ":" + seqNumber + " " + value);
+    }
+
+    public void logReadRequest(String clientID, String replicaID){
+        this.log("Client " + clientID + " read req to " + replicaID);
+    }
+
+    public void logReadResult(String clientID, String value){
+        this.log("Client " + clientID + " read done " + value);
     }
 
     public void close(){
