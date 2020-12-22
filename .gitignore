@@ -26,3 +26,6 @@ hs_err_pid*
 .idea/
 .gradle/
 build/
+
+# Log file
+*.txt

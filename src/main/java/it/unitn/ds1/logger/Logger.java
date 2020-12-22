@@ -7,7 +7,6 @@ import java.io.IOException;
 public class Logger {
 
     private static Logger instance = null;
-    private static String logFilePath = null;
 
     private BufferedWriter fOut;
 
@@ -26,15 +25,25 @@ public class Logger {
         return instance;
     }
 
+    public static Logger getInstance(){
+        if (instance == null)
+            throw new NullPointerException();
+
+        return instance;
+    }
+
     public void log(String coordinatorID, String text){
+        if (fOut == null)
+            throw new NullPointerException();
+
         try {
-            fOut.write(coordinatorID + " --- " + text);
+            fOut.write(coordinatorID + " --- " + text + "\n");
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private void close(){
+    public void close(){
         if (fOut != null) {
             try {
                 fOut.close();

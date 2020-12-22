@@ -2,6 +2,7 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
+import it.unitn.ds1.logger.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -11,7 +12,10 @@ public class Main {
 
     public static void main(String[] args) {
         // Create the actor system
-        final ActorSystem system = ActorSystem.create("helloakka");
+        final ActorSystem system = ActorSystem.create("ds1project");
+
+        //Start the logger
+        final Logger logger = Logger.getInstance("log.txt");
 
         // Create the coordinator
         /*ActorRef coordinator = system.actorOf(Coordinator.props(), "coordinator");
@@ -36,6 +40,8 @@ public class Main {
             System.in.read();
         }
         catch (IOException ignored) {}
+
+        Logger.getInstance().close();
         system.terminate();
     }
 
