@@ -24,3 +24,5 @@ hs_err_pid*
 
 # Intellij folder
 .idea/
+.gradle/
+build/
