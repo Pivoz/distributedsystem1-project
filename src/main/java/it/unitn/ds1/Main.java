@@ -15,7 +15,7 @@ public class Main {
         final ActorSystem system = ActorSystem.create("ds1project");
 
         //Start the logger
-        final Logger logger = Logger.getInstance("log.txt");
+        Logger.getInstance("log.txt");
 
         // Create the coordinator
         /*ActorRef coordinator = system.actorOf(Coordinator.props(), "coordinator");
