@@ -34,7 +34,7 @@ public class Replica extends AbstractActor {
         this.ack = new HashMap<Integer, Integer>();
     }
 
-    static public Props props(int id, String topic) {
+    static public Props props(int id) {
         return Props.create(Replica.class, () -> new Replica(id));
     }
 
@@ -72,15 +72,7 @@ public class Replica extends AbstractActor {
      */
     public void onReplicaMsg(ReplicaMessage msg) {
         if(coordinator.equals(getSelf())){
-            currentSeqNumber++;
-            AckMessage ackMessage = new AckMessage(currentEpoch, currentSeqNumber, msg.sequenceNumber);
-            ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, msg.senderId);
-            for(ActorRef replica: group){
-                if(replica.equals(getSelf()) && !replica.equals(group.get(msg.senderId))) {
-                    replica.tell(update, getSelf());
-                }
-            }
-            group.get(msg.senderId).tell(ackMessage, getSelf());
+            broadCastUpdateRequest(msg);
         }
         else {
             buffer.add(msg);
@@ -100,28 +92,15 @@ public class Replica extends AbstractActor {
     public void onAckMsg(AckMessage msg) {
         //TODO: stop timeout
         if(coordinator.equals(getSelf())){
-            int ackNumber = ack.get(msg.sequenceNumber);
-            ackNumber++;
-            ack.put(msg.sequenceNumber, ackNumber);
+            int ackNumber = incrementAck(msg.sequenceNumber);
             if(ackNumber > group.size()/2) {
                 WriteOKMessage ok = new WriteOKMessage(currentEpoch, msg.sequenceNumber);
-                for(ActorRef peer : group) {
-                    if(!peer.equals(getSelf())){
-                        peer.tell(ok, getSelf());
-                    }
-                }
+                broadcastMsg(ok, Arrays.asList(getSelf()));
             }
         }
         else {
-            int bufferMsgIndex = -1;
-            for(int i=0; i<buffer.size(); i++) {
-                ReplicaMessage tmp = buffer.get(i);
-                if (tmp.sequenceNumber == msg.oldSequenceNumber) {
-                    bufferMsgIndex = i;
-                }
-            }
             //update buffer in case of wrong sequence number/epoch
-            ReplicaMessage bufferedMsg = buffer.remove(bufferMsgIndex);
+            ReplicaMessage bufferedMsg = removeMessageFromBuffer(msg.oldSequenceNumber);
             ReplicaMessage updatedBufferMsg = new ReplicaMessage(msg.epoch, msg.sequenceNumber, bufferedMsg.value, bufferedMsg.senderId);
             buffer.add(updatedBufferMsg);
         }
@@ -132,14 +111,7 @@ public class Replica extends AbstractActor {
      * @param msg
      */
     public void onWriteOKMsg(WriteOKMessage msg) {
-        int bufferMsgIndex = -1;
-        for(int i=0; i<buffer.size(); i++) {
-            ReplicaMessage tmp = buffer.get(i);
-            if (tmp.sequenceNumber == msg.sequenceNumber) {
-                bufferMsgIndex = i;
-            }
-        }
-        ReplicaMessage bufferedMsg = buffer.remove(bufferMsgIndex);
+        ReplicaMessage bufferedMsg = removeMessageFromBuffer(msg.sequenceNumber);
         history.add(bufferedMsg);
     }
 
@@ -150,6 +122,46 @@ public class Replica extends AbstractActor {
         Logger log = Logger.getInstance();
         for(ReplicaMessage msg : history){
             log.log(msg.toString());
+        }
+    }
+
+    private ReplicaMessage removeMessageFromBuffer(int sequenceNumber){
+        int bufferMsgIndex = -1;
+        for(int i=0; i<buffer.size(); i++) {
+            ReplicaMessage tmp = buffer.get(i);
+            if (tmp.sequenceNumber == sequenceNumber) {
+                bufferMsgIndex = i;
+            }
+        }
+        if(bufferMsgIndex == -1){
+            return null;
+        }
+        else{
+            return buffer.remove(bufferMsgIndex);
+        }
+    }
+
+    public void broadCastUpdateRequest(ReplicaMessage msg) {
+        currentSeqNumber++;
+        AckMessage ackMessage = new AckMessage(currentEpoch, currentSeqNumber, msg.sequenceNumber);
+        ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, msg.senderId);
+        broadcastMsg(update, Arrays.asList(getSelf(), group.get(msg.senderId)));
+        ack.put(currentSeqNumber, 1);
+        group.get(msg.senderId).tell(ackMessage, getSelf());
+    }
+
+    public int incrementAck(int sequenceNumber) {
+        int ackNumber = ack.get(sequenceNumber);
+        ackNumber++;
+        ack.put(sequenceNumber, ackNumber);
+        return ackNumber;
+    }
+
+    public <T> void broadcastMsg(T msg, List<ActorRef> replicasToExclude) {
+        for (ActorRef replica : group) {
+            if (!replicasToExclude.contains(replica)) {
+                replica.tell(msg, getSelf());
+            }
         }
     }
 
