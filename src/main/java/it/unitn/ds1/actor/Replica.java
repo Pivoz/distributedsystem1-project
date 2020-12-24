@@ -105,7 +105,13 @@ public class Replica extends AbstractActor {
             int ackNumber = incrementAck(msg.sequenceNumber);
             if(ackNumber > group.size()/2) {
                 WriteOKMessage ok = new WriteOKMessage(currentEpoch, msg.sequenceNumber);
-                broadcastMsg(ok, Arrays.asList(getSelf()));
+                ReplicaMessage bufferedMsg = removeMessageFromBuffer(msg.sequenceNumber);
+                if(bufferedMsg != null){
+                    history.add(bufferedMsg);
+                    Logger.getInstance().logReplicaUpdate(getSelf().path().name(), bufferedMsg.epoch, bufferedMsg.sequenceNumber, bufferedMsg.value);
+                    System.out.println("REPLICA " + id + "- Add to history: " + bufferedMsg.value);
+                    broadcastMsg(ok, Arrays.asList(getSelf()));
+                }
             }
         }
         else {
@@ -123,6 +129,8 @@ public class Replica extends AbstractActor {
     public void onWriteOKMsg(WriteOKMessage msg) {
         ReplicaMessage bufferedMsg = removeMessageFromBuffer(msg.sequenceNumber);
         history.add(bufferedMsg);
+        System.out.println("REPLICA " + id + "- Add to history: " + bufferedMsg.value);
+        Logger.getInstance().logReplicaUpdate(getSelf().path().name(), bufferedMsg.epoch, bufferedMsg.sequenceNumber, bufferedMsg.value);
     }
 
     /**
@@ -131,8 +139,11 @@ public class Replica extends AbstractActor {
      */
     public void onReadRequest(ReadRequestMessage msg) {
         ReadResponseMessage msgToSend;
+        Logger logger = Logger.getInstance();
+        logger.logReadRequest(this.sender().path().name(), getSelf().path().name());
 
         if(history.size() > 0){
+            System.out.println("REPLICA"+id + " - " + history.size());
             ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
             msgToSend = new ReadResponseMessage(currentMsg.value);
         }
@@ -140,6 +151,7 @@ public class Replica extends AbstractActor {
             msgToSend = new ReadResponseMessage(-1);
         }
         this.sender().tell(msgToSend, getSelf());
+        logger.logReadResult(this.sender().path().name(), msgToSend.getValue());
 
     }
 
@@ -173,6 +185,7 @@ public class Replica extends AbstractActor {
         currentSeqNumber++;
         AckMessage ackMessage = new AckMessage(currentEpoch, currentSeqNumber, msg.sequenceNumber);
         ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, msg.senderId);
+        buffer.add(update);
         broadcastMsg(update, Arrays.asList(getSelf(), group.get(msg.senderId)));
         ack.put(currentSeqNumber, 1);
         group.get(msg.senderId).tell(ackMessage, getSelf());

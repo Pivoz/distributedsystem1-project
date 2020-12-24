@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 public class Client extends AbstractActor {
 
     private int id;
-    private final int MESSAGE_INTERVAL_SECONDS = 5;
+    private final int MESSAGE_INTERVAL_SECONDS = 1;
 
     private List<ActorRef> replicaList;
     private Cancellable timeout = null;
@@ -68,7 +68,7 @@ public class Client extends AbstractActor {
 
         if (dice < 8) {
             replicaList.get(replicaPosition).tell(new ReadRequestMessage(), getSelf());
-            System.out.println("[" + getSelf().path().name() + "] raised a read request to " + replicaList.get(replicaPosition));
+            System.out.println("[" + getSelf().path().name() + "] raised a read request to " + replicaList.get(replicaPosition).path().name());
 
             //Set a timeout for the read operation
             if (timeout != null)
@@ -84,8 +84,8 @@ public class Client extends AbstractActor {
         }
         else {
             int newValue = (int) (Math.random() * 1000000);
-            replicaList.get(replicaPosition).tell(new UpdateRequestMessage(newValue), getSelf());
-            System.out.println("[" + getSelf().path().name() + "] raised an update request (newValue = " + newValue + ") to " + replicaList.get(replicaPosition));
+            replicaList.get(replicaPosition).tell(new ClientUpdateRequestMsg(newValue), getSelf());
+            System.out.println("[" + getSelf().path().name() + "] raised an update request (newValue = " + newValue + ") to " + replicaList.get(replicaPosition).path().name());
         }
     }
 
@@ -94,7 +94,7 @@ public class Client extends AbstractActor {
      * @param message
     * */
     private void onReadResponseMessage(ReadResponseMessage message){
-        System.out.println("[" + getSelf().path().name() + "] read value '" + message.getValue());
+        System.out.println("[" + getSelf().path().name() + "] read value " + message.getValue());
 
         //Cancel the pending timeout
         if (timeout != null){

@@ -43,7 +43,7 @@ public class Logger {
         }
     }
 
-    public void logReplicaUpdate(String replicaID, int epoch, int seqNumber, String value){
+    public void logReplicaUpdate(String replicaID, int epoch, int seqNumber, int value){
         this.log("Replica " + replicaID + " update " + epoch + ":" + seqNumber + " " + value);
     }
 
@@ -51,7 +51,7 @@ public class Logger {
         this.log("Client " + clientID + " read req to " + replicaID);
     }
 
-    public void logReadResult(String clientID, String value){
+    public void logReadResult(String clientID, int value){
         this.log("Client " + clientID + " read done " + value);
     }
 

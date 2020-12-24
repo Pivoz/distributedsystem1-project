@@ -13,7 +13,7 @@ public class Test {
     private static final boolean DEBUG = true;
 
     public static void main(String[] args) throws IOException {
-
+        //TODO: fix this shit
         final String FILEPATH = "log.txt";
         File log = new File(FILEPATH);
         if (!log.exists()){
@@ -55,7 +55,7 @@ public class Test {
                         clientPendingReads[clientID] = -1;
 
                         //If the read element was not already inserted in the list of that replica
-                        if (replicaList.get(replicaID).get(replicaList.get(replicaID).size()) != value)
+                        if ((replicaList.get(replicaID).size() == 0 || replicaList.get(replicaID).get(replicaList.get(replicaID).size()-1) != value) && value != -1)
                             replicaList.get(replicaID).add(value);
                     }
                 }
@@ -72,15 +72,24 @@ public class Test {
         for (int i=0; i<replicaList.size(); i++)
             System.out.println("Replica " + i + " output: " + listToString(replicaList.get(i)));
 
+        int largestList = 0;
+        for (int i=1; i<replicaList.size(); i++)
+            if (replicaList.get(i).size() > replicaList.get(largestList).size())
+                largestList = i;
+
         //Data elaboration
         List<Integer> sequentialList = new ArrayList();
-        for (Integer value : replicaList.get(0))
+        for (Integer value : replicaList.get(largestList))
             sequentialList.add(value);
 
         if (DEBUG)
             System.out.println("LIST = " + listToString(sequentialList));
 
-        for (int i=1; i<replicaList.size(); i++){
+        for (int i=0; i<replicaList.size(); i++){
+
+            if (i == largestList)
+                continue;
+
             List actualListRef = replicaList.get(i);
             int lastIndex = -1;
 
