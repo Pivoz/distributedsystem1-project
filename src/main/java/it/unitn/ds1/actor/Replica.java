@@ -20,7 +20,7 @@ public class Replica extends AbstractActor {
     private final int id;         // ID of the current actor
 
     /* -- Actor constructor --------------------------------------------------- */
-
+    //TODO: put boolean "isCoordinator"
     public Replica(int id) {
         this.currentEpoch = 0;
         this.currentSeqNumber = 0;
@@ -47,6 +47,7 @@ public class Replica extends AbstractActor {
                 .match(AckMessage.class,                this::onAckMsg)
                 .match(WriteOKMessage.class,            this::onWriteOKMsg)
                 .match(StartMessage.class,              this::onStartMessage)
+                .match(ReadRequestMessage.class,        this::onReadRequest)
                 .build();
     }
 
@@ -122,6 +123,24 @@ public class Replica extends AbstractActor {
     public void onWriteOKMsg(WriteOKMessage msg) {
         ReplicaMessage bufferedMsg = removeMessageFromBuffer(msg.sequenceNumber);
         history.add(bufferedMsg);
+    }
+
+    /**
+     * If client request a read then answer with last message in history
+     * @param msg
+     */
+    public void onReadRequest(ReadRequestMessage msg) {
+        ReadResponseMessage msgToSend;
+
+        if(history.size() > 0){
+            ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
+            msgToSend = new ReadResponseMessage(currentMsg.value);
+        }
+        else {
+            msgToSend = new ReadResponseMessage(-1);
+        }
+        this.sender().tell(msgToSend, getSelf());
+
     }
 
 
