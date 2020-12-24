@@ -15,7 +15,7 @@ public class Client extends AbstractActor {
     private int id;
     private final int MESSAGE_INTERVAL_SECONDS = 5;
 
-    private List<ActorRef> clientList, replicaList;
+    private List<ActorRef> replicaList;
     private Cancellable timeout = null;
 
     private Client(int clientID){
@@ -27,13 +27,17 @@ public class Client extends AbstractActor {
         return Props.create(Client.class, () -> new Client(clientID));
     }
 
+    /**
+     * Returns the id of the client
+     * @return id
+     * */
     public int getId(){ return id; }
 
-    /*
+    /**
      * Invoked at the beginning to initialize the client
-     * */
+     * @param message
+     */
     private void onStartMessage(StartMessage message){
-        this.clientList = message.getClientList();
         this.replicaList = message.getReplicaList();
 
         //Start the message scheduling
@@ -47,8 +51,9 @@ public class Client extends AbstractActor {
         );
     }
 
-    /*
+    /**
     * Invoked when the client have to schedule a new request to one replica
+     * @param message
     * */
     private void onSendClientMessage(SendClientMessage message) {
 
@@ -84,8 +89,9 @@ public class Client extends AbstractActor {
         }
     }
 
-    /*
+    /**
     * Invoked when arrives a read response from a replica
+     * @param message
     * */
     private void onReadResponseMessage(ReadResponseMessage message){
         System.out.println("[" + getSelf().path().name() + "] read value '" + message.getValue());
@@ -97,14 +103,18 @@ public class Client extends AbstractActor {
         }
     }
 
+    /**
+     * Invoked when the read timeout expires
+     * @param message
+     * */
     private void onClientReadTimeoutMessage(ClientReadTimeout message){
         System.out.println("[" + getSelf().path().name() + "] seems that replica " + message.getReplicaPosition() + " is not working properly. Removed from the replica list");
 
         replicaList.remove(message.getReplicaPosition());
     }
 
-    /*
-    * Message receiver
+    /**
+    * Message receiver builder
     * */
     @Override
     public Receive createReceive() {

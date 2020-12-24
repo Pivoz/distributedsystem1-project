@@ -63,6 +63,8 @@ public class Logger {
                 e.printStackTrace();
             }
         }
+
+        instance = null;
     }
 
 }
