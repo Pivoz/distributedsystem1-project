@@ -24,10 +24,9 @@ public class Main {
         Logger.getInstance("log.txt");
 
         //Create the replicas
-        //TODO - uncomment after having implemented the Replica class
         List<ActorRef> replicaList = new ArrayList<>();
-        //for (int i=0; i<N_REPLICAS; i++)
-        //    replicaList.add(system.actorOf(Replica.props(i), "replica" + i));
+        for (int i=0; i<N_REPLICAS; i++)
+            replicaList.add(system.actorOf(Replica.props(i), "replica" + i));
 
         //Create the clients
         List<ActorRef> clientList = new ArrayList<>();

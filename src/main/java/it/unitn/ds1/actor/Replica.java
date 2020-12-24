@@ -3,20 +3,17 @@ package it.unitn.ds1.actor;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import it.unitn.ds1.actor.message.*;
 import it.unitn.ds1.logger.Logger;
-import it.unitn.ds1.actor.message.AckMessage;
-import it.unitn.ds1.actor.message.ReplicaMessage;
-import it.unitn.ds1.actor.message.ClientUpdateRequestMsg;
-import it.unitn.ds1.actor.message.WriteOKMessage;
 
 import java.util.*;
 
 public class Replica extends AbstractActor {
     private final int MAX_TIMEOUT = 3000; //3 seconds
-    private ArrayList<ActorRef> group; // the list of peers (the multicast group)
+    private List<ActorRef> group; // the list of peers (the multicast group)
     private ActorRef coordinator;
-    private ArrayList<ReplicaMessage> buffer; //list of message to ack
-    private ArrayList<ReplicaMessage> history;
+    private List<ReplicaMessage> buffer; //list of message to ack
+    private List<ReplicaMessage> history;
     private int currentEpoch;
     private int currentSeqNumber;
     private Map<Integer, Integer> ack; //COORDINATOR: keep count of every ack before WRITEOK <seq num : ack count >
@@ -45,11 +42,23 @@ public class Replica extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(ClientUpdateRequestMsg.class, this::onClientUpdateRequestMsg)
-                .match(ReplicaMessage.class, this::onReplicaMsg)
-                .match(AckMessage.class, this::onAckMsg)
-                .match(WriteOKMessage.class, this::onWriteOKMsg)
+                .match(ClientUpdateRequestMsg.class,    this::onClientUpdateRequestMsg)
+                .match(ReplicaMessage.class,            this::onReplicaMsg)
+                .match(AckMessage.class,                this::onAckMsg)
+                .match(WriteOKMessage.class,            this::onWriteOKMsg)
+                .match(StartMessage.class,              this::onStartMessage)
                 .build();
+    }
+
+    /**
+     * Invoked when we receive the initial message that contains the clients and replicas groups
+     * @param message
+     * */
+    public void onStartMessage(StartMessage message){
+        this.group = message.getReplicaList();
+
+        //The initial coordinator is the first replica of the list
+        this.coordinator = this.group.get(0);
     }
 
     /**
