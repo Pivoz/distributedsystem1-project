@@ -2,6 +2,9 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
+import it.unitn.ds1.actor.Client;
+import it.unitn.ds1.actor.Replica;
+import it.unitn.ds1.actor.message.StartMessage;
 import it.unitn.ds1.logger.Logger;
 
 import java.io.IOException;
@@ -10,6 +13,9 @@ import java.util.List;
 
 public class Main {
 
+    private static final int N_CLIENTS = 3;
+    private static final int N_REPLICAS = 5;
+
     public static void main(String[] args) {
         // Create the actor system
         final ActorSystem system = ActorSystem.create("ds1project");
@@ -17,23 +23,23 @@ public class Main {
         //Start the logger
         Logger.getInstance("log.txt");
 
-        // Create the coordinator
-        /*ActorRef coordinator = system.actorOf(Coordinator.props(), "coordinator");
+        //Create the replicas
+        //TODO - uncomment after having implemented the Replica class
+        List<ActorRef> replicaList = new ArrayList<>();
+        //for (int i=0; i<N_REPLICAS; i++)
+        //    replicaList.add(system.actorOf(Replica.props(i), "replica" + i));
 
-        // Create participants
-        List<ActorRef> group = new ArrayList<>();
-        for (int i=0; i<N_PARTICIPANTS; i++) {
-            group.add(system.actorOf(Participant.props(i), "participant" + i));
-        }
+        //Create the clients
+        List<ActorRef> clientList = new ArrayList<>();
+        for (int i=0; i<N_CLIENTS; i++)
+            clientList.add(system.actorOf(Client.props(i), "client" + i));
 
-        // Send start messages to the participants to inform them of the group
-        StartMessage start = new StartMessage(group);
-        for (ActorRef peer: group) {
-            peer.tell(start, null);
-        }
-
-        // Send the start messages to the coordinator
-        coordinator.tell(start, null);*/
+        //Send the StartMessage to all the nodes
+        StartMessage startMessage = new StartMessage(clientList, replicaList);
+        for (ActorRef actor : replicaList)
+            actor.tell(startMessage, null);
+        for (ActorRef actor : clientList)
+            actor.tell(startMessage, null);
 
         try {
             System.out.println("--- Press any key to terminate ---");
