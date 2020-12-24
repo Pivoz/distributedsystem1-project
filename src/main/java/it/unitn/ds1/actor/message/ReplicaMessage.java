@@ -1,4 +1,4 @@
-package it.unitn.ds1.message;
+package it.unitn.ds1.actor.message;
 
 public class ReplicaMessage {
     public final int epoch;
