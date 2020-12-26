@@ -2,29 +2,34 @@ package it.unitn.ds1.actor.message;
 
 import java.io.Serializable;
 
-public class AckMessage implements Serializable {
-    public final int epoch;
-    public final int sequenceNumber;
-    public final int oldSequenceNumber;
 
-    /**
-     * Constructor used by Replica Coordinator
-     * @param epoch
-     * @param sequenceNumber
-     * @param oldSequenceNumber
-     */
-    public AckMessage(int epoch, int sequenceNumber, int oldSequenceNumber) {
-        this.epoch = epoch;
+public class AckMessage implements Serializable {
+    public final int value;
+    public final int sequenceNumber;
+    public final AckType ackType;
+
+
+    public AckMessage(int value, int sequenceNumber, AckType ackType){
+        this.value = value;
         this.sequenceNumber = sequenceNumber;
-        this.oldSequenceNumber = oldSequenceNumber;
+        this.ackType = ackType;
     }
 
     /**
-     * Constructor used by normal Replicas
-     * @param epoch
-     * @param sequenceNumber
+     * Constructor used by Replica Coordinator
+     * @param value
+     * @param ackType
      */
-    public AckMessage(int epoch, int sequenceNumber){
-        this(epoch, sequenceNumber, -1);
+    public AckMessage(int value, AckType ackType) {
+        this(value, -1, ackType);
+    }
+
+
+    /**
+     * Used during Election
+     * @param ackType
+     */
+    public AckMessage(AckType ackType){
+        this(-1, -1, ackType);
     }
 }
