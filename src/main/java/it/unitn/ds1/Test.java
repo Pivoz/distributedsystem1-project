@@ -13,7 +13,6 @@ public class Test {
     private static final boolean DEBUG = true;
 
     public static void main(String[] args) throws IOException {
-        //TODO: fix this shit
         final String FILEPATH = "log.txt";
         File log = new File(FILEPATH);
         if (!log.exists()){
@@ -70,61 +69,45 @@ public class Test {
         fIn.close();
 
         for (int i=0; i<replicaList.size(); i++)
-            System.out.println("Replica " + i + " output: " + listToString(replicaList.get(i)));
-
-        int largestList = 0;
-        for (int i=1; i<replicaList.size(); i++)
-            if (replicaList.get(i).size() > replicaList.get(largestList).size())
-                largestList = i;
+            System.out.println("Replica " + i + " READs sequence: " + listToString(replicaList.get(i)));
 
         //Data elaboration
-        List<Integer> sequentialList = new ArrayList();
-        for (Integer value : replicaList.get(largestList))
-            sequentialList.add(value);
+        for (int i=0; i<replicaList.size() - 1; i++){
+            for (int j=i+1; j<replicaList.size(); j++){
 
-        if (DEBUG)
-            System.out.println("LIST = " + listToString(sequentialList));
+                //Find common object between replica i and j, ordered in replica i order
+                List<Integer> commonObjects = new ArrayList<>();
+                for (Integer value : replicaList.get(i))
+                    if (replicaList.get(j).contains(value))
+                        commonObjects.add(value);
 
-        for (int i=0; i<replicaList.size(); i++){
+                if (DEBUG)
+                    System.out.println("COMMON (" + i+", "+j+"): " + listToString(commonObjects));
 
-            if (i == largestList)
-                continue;
-
-            List actualListRef = replicaList.get(i);
-            int lastIndex = -1;
-
-            for (int j=0; j<actualListRef.size(); j++){
-                int index = sequentialList.indexOf(actualListRef.get(j));
-
-                if (index == -1){
-                    //There isn't that element in the global list -> I add it
-                    if (j==0) {
-                        sequentialList.add(0, (Integer) actualListRef.get(j));
-                        lastIndex = 0;
-                    }
-                    else {
-                        int lastCommonObjectPosition = sequentialList.indexOf(actualListRef.get(j-1));
-                        sequentialList.add(lastCommonObjectPosition+1, (Integer) actualListRef.get(j));
-                        lastIndex = lastCommonObjectPosition + 1;
-                    }
-                }
-                else if (index < lastIndex){
-                    System.err.println("SEQUENTIAL CONSISTENCY VIOLATED!\nViolation found in replica n." + i + " step n." + j);
-                    System.exit(0);
-                }
-                else
-                    lastIndex = index;
+                //Check the order of the common objects
+                if (!commonObjects.isEmpty())
+                    for (int k=0; k<commonObjects.size(); k++)
+                        if (!checkPreviousCommonObject(replicaList.get(j), replicaList.get(j).indexOf(commonObjects.get(k))-1, (k==0) ? null : commonObjects.get(k-1), commonObjects)){
+                            System.err.println("SEQUENTIAL CONSISTENCY VIOLATED!\nViolation found between replica n." + i + " and replica n." + j);
+                            System.exit(0);
+                        }
             }
-
-            if (DEBUG)
-                System.out.println("LIST = " + listToString(sequentialList));
         }
 
-        if (DEBUG)
-            System.out.println("LIST = " + listToString(sequentialList));
-
-        System.out.println("Sequential consistency check passed without errors");
+        System.out.println("\nSequential consistency check passed without errors");
         System.exit(0);
+    }
+
+    private static boolean checkPreviousCommonObject(List<Integer> list, int end, Integer valueToCheck, List<Integer> commonObjects){
+
+        for (int i=end; i>=0; i--)
+            if (commonObjects.contains(list.get(i))) {
+                if (valueToCheck == null || !list.get(i).equals(valueToCheck))
+                    return false;
+                else
+                    return true;
+            }
+        return true;
     }
 
     private static byte getIdFromString(String text){
