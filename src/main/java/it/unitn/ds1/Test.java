@@ -32,6 +32,8 @@ public class Test {
         //Read the log file line by line
         BufferedReader fIn = new BufferedReader(new FileReader(log));
         String line = fIn.readLine();
+        int lineNumber = 1;
+
         while (line != null){
             if (line.startsWith("Client")){
                 String [] splitted = line.split(" ");
@@ -57,6 +59,8 @@ public class Test {
                         if ((replicaList.get(replicaID).size() == 0 || replicaList.get(replicaID).get(replicaList.get(replicaID).size()-1) != value) && value != -1)
                             replicaList.get(replicaID).add(value);
                     }
+                    else
+                        System.out.println("WARN: founded a read value not paired with a read request at line n." + lineNumber);
                 }
                 else {
                     System.err.println("ERROR: malformed logged string found!\nThe string is: " + line);
@@ -64,6 +68,7 @@ public class Test {
             }
 
             line = fIn.readLine();
+            lineNumber++;
         }
 
         fIn.close();

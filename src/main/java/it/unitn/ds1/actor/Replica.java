@@ -24,7 +24,7 @@ public class Replica extends AbstractActor {
     private final int id;         // ID of the current actor
     private boolean isElectionInProgress;
     private Cancellable isAliveTimer;
-    private Cancellable updateRequestTimer;
+    private List<Cancellable> updateRequestTimers;
     private Cancellable electionTimer;
 
     /* -- Actor constructor --------------------------------------------------- */
@@ -39,7 +39,7 @@ public class Replica extends AbstractActor {
         this.ack = new HashMap<Integer, Integer>();
         this.isElectionInProgress = false;
         this.isAliveTimer = null;
-        this.updateRequestTimer = null;
+        this.updateRequestTimers = new ArrayList<>();
         this.electionTimer = null;
     }
 
@@ -74,7 +74,6 @@ public class Replica extends AbstractActor {
         this.group = message.getReplicaList();
         //The initial coordinator is the first replica of the list
         coordinator = this.group.get(0);
-        System.out.println("coordinit: " + coordinator);
         currentEpoch++;
 
         if(coordinator.equals(getSelf())) {
@@ -93,7 +92,7 @@ public class Replica extends AbstractActor {
     private void onClientUpdateRequestMsg(ClientUpdateRequestMsg msg) {
         ReplicaMessage update = new ReplicaMessage(msg.value);
         coordinator.tell(update, getSelf());
-        updateRequestTimer = setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), new ElectionMsg(new ArrayList<Integer>(group.size())), false);
+        updateRequestTimers.add(setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), new ElectionMsg(new ArrayList<Integer>(group.size())), false));
     }
 
     /**
@@ -123,22 +122,20 @@ public class Replica extends AbstractActor {
     public void onAckMsg(AckMessage msg) {
         switch (msg.ackType){
             case UPDATEREQUEST:
-                if(this.updateRequestTimer != null) {
-                    this.updateRequestTimer.cancel();
+                if(this.updateRequestTimers.size() > 0) {
+                    this.updateRequestTimers.remove(0).cancel();
                 }
                 break;
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.value);
-                if(ackNumber > group.size()/2) {
-                    WriteOKMessage ok = new WriteOKMessage(currentEpoch, msg.value);
+                if(ackNumber == group.size()/2 + 1) {
+                    currentSeqNumber++;
+                    WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
                     int bufferedMsg = removeMessageFromBuffer(msg.value);
-                    if(bufferedMsg != -1){
-                        ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
-                        history.add(replicaMsg);
-                        Logger.getInstance().logReplicaUpdate(getSelf().path().name(), replicaMsg.epoch, replicaMsg.sequenceNumber, replicaMsg.value);
-                        System.out.println("REPLICA " + id + "- Add to history: " + replicaMsg.value);
-                        broadcastMsg(ok, Arrays.asList(getSelf()));
-                    }
+                    ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
+                    history.add(replicaMsg);
+                    broadcastMsg(ok, Arrays.asList(getSelf()));
+                    Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
                 }
                 break;
             case ELECTION:
@@ -156,12 +153,12 @@ public class Replica extends AbstractActor {
      */
     public void onWriteOKMsg(WriteOKMessage msg) {
         currentSeqNumber = msg.sequenceNumber;
-        int bufferedMsg = removeMessageFromBuffer(msg.sequenceNumber);
+        int bufferedMsg = removeMessageFromBuffer(msg.value);
         ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, bufferedMsg);
         history.add(replicaMsg);
 
-        System.out.println("REPLICA " + id + "- Add to history: " + replicaMsg.value);
-        Logger.getInstance().logReplicaUpdate(getSelf().path().name(), replicaMsg.epoch, replicaMsg.sequenceNumber, replicaMsg.value);
+        //System.out.println("REPLICA " + id + "- Add to history: " + replicaMsg.value);
+        Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
     }
 
     /**
@@ -174,7 +171,6 @@ public class Replica extends AbstractActor {
         logger.logReadRequest(this.sender().path().name(), getSelf().path().name());
 
         if(history.size() > 0){
-            System.out.println("REPLICA"+id + " - " + history.size());
             ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
             msgToSend = new ReadResponseMessage(currentMsg.value);
         }
@@ -252,11 +248,10 @@ public class Replica extends AbstractActor {
                 return buffer.remove(i);
             }
         }
-        return -1;
+        throw new RuntimeException("Buffer is empty! " + buffer.size());
     }
 
     private void broadCastUpdateRequest(ReplicaMessage msg) {
-        currentSeqNumber++;
         ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value);
         buffer.add(msg.value);
         broadcastMsg(update, Arrays.asList(getSelf()));
