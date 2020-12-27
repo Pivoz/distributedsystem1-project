@@ -213,7 +213,7 @@ public class Replica extends AbstractActor {
                 SyncMsg syncMsg = new SyncMsg(getSelf());
                 broadcastMsg(syncMsg,Arrays.asList(getSelf()));
                 currentEpoch++;
-
+                currentSeqNumber = 0;
                 coordinator = getSelf();
                 isAliveTimer = setIsAliveTimer();
             }
@@ -248,7 +248,7 @@ public class Replica extends AbstractActor {
 
         System.err.println("NEW COORDINATOR FROM REPLICA" + id + " is " + coordinator.path().name());
         this.currentEpoch++;
-
+        currentSeqNumber = 0;
         //Restart the is-alive timer
         isAliveTimer = setIsAliveTimer();
     }
