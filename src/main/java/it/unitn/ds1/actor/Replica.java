@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
     private final int MAX_TIMEOUT = 3000; //3 seconds
-    private final int IS_ALIVE_TIMEOUT = 1500;
+    private final int IS_ALIVE_TIMEOUT = 1500; //ONLY FOR COORDINATOR
     private final int MAX_ELECTION_TIMEOUT = 1000; //1 seconds
 
     private List<ActorRef> group; // the list of peers (the multicast group)
@@ -213,6 +213,9 @@ public class Replica extends AbstractActor {
                 SyncMsg syncMsg = new SyncMsg(getSelf());
                 broadcastMsg(syncMsg,Arrays.asList(getSelf()));
                 currentEpoch++;
+
+                coordinator = getSelf();
+                isAliveTimer = setIsAliveTimer();
             }
             else {
                 sendElectionToNextReplica(msg);
@@ -242,8 +245,6 @@ public class Replica extends AbstractActor {
     private void onSyncMsg(SyncMsg msg) {
         this.isElectionInProgress = false;
         this.coordinator = msg.coordinator;
-        if (coordinator == null)
-            throw new RuntimeException("SPACCATO");
 
         System.err.println("NEW COORDINATOR FROM REPLICA" + id + " is " + coordinator.path().name());
         this.currentEpoch++;
