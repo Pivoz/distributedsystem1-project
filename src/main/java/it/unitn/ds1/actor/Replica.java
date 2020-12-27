@@ -24,7 +24,7 @@ public class Replica extends AbstractActor {
     private final int id;         // ID of the current actor
     private boolean isElectionInProgress;
     private Cancellable isAliveTimer;
-    private List<Cancellable> updateRequestTimers;
+    private Map<Integer, Cancellable> updateRequestTimers;
     private Cancellable electionTimer;
 
     /* -- Actor constructor --------------------------------------------------- */
@@ -39,7 +39,7 @@ public class Replica extends AbstractActor {
         this.ack = new HashMap<Integer, Integer>();
         this.isElectionInProgress = false;
         this.isAliveTimer = null;
-        this.updateRequestTimers = new ArrayList<>();
+        this.updateRequestTimers = new HashMap<Integer, Cancellable>();
         this.electionTimer = null;
     }
 
@@ -92,7 +92,7 @@ public class Replica extends AbstractActor {
     private void onClientUpdateRequestMsg(ClientUpdateRequestMsg msg) {
         ReplicaMessage update = new ReplicaMessage(msg.value);
         coordinator.tell(update, getSelf());
-        updateRequestTimers.add(setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), new ElectionMsg(new ArrayList<Integer>(group.size())), false));
+        updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), new ElectionMsg(new ArrayList<Integer>(group.size())), false));
     }
 
     /**
@@ -122,8 +122,8 @@ public class Replica extends AbstractActor {
     public void onAckMsg(AckMessage msg) {
         switch (msg.ackType){
             case UPDATEREQUEST:
-                if(this.updateRequestTimers.size() > 0) {
-                    this.updateRequestTimers.remove(0).cancel();
+                if(this.updateRequestTimers.containsKey(msg.value)) {
+                    this.updateRequestTimers.remove(msg.value).cancel();
                 }
                 break;
             case COORDUPDATEREQUEST:
