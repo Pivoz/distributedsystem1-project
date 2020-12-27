@@ -2,7 +2,9 @@ package it.unitn.ds1.actor.message;
 
 import akka.actor.ActorRef;
 
-public class ReplicaMessage {
+import java.io.Serializable;
+
+public class ReplicaMessage implements Serializable {
     public final int epoch;
     public final int sequenceNumber;          // the sequence number of that epoch
     public final int value;          // the sequence number of that epoch

@@ -7,6 +7,7 @@ import akka.actor.Props;
 import it.unitn.ds1.actor.message.*;
 import scala.concurrent.duration.Duration;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -38,7 +39,7 @@ public class Client extends AbstractActor {
      * @param message
      */
     private void onStartMessage(StartMessage message){
-        this.replicaList = message.getReplicaList();
+        this.replicaList = new ArrayList<>(message.getReplicaList());
 
         //Start the message scheduling
         Cancellable timer = getContext().system().scheduler().scheduleWithFixedDelay(

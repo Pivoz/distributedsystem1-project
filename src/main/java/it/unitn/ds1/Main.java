@@ -13,8 +13,8 @@ import java.util.List;
 
 public class Main {
 
-    public static final int N_CLIENTS = 10;
-    public static final int N_REPLICAS = 15;
+    public static final int N_CLIENTS = 3;
+    public static final int N_REPLICAS = 5;
 
     public static void main(String[] args) {
         // Create the actor system
@@ -47,8 +47,8 @@ public class Main {
         catch (IOException ignored) {}
 
         //Terminate the system and close the log file
-        Logger.getInstance().close();
         system.terminate();
+        Logger.getInstance().close();
     }
 
 }
