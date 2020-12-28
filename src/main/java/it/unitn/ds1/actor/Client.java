@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 public class Client extends AbstractActor {
 
     private int id;
-    private final int MESSAGE_INTERVAL_SECONDS = 1;
+    private final int MESSAGE_INTERVAL_SECONDS = 4;
     private final int READ_TIMEOUT_SECONDS = 3;
 
     private List<ActorRef> replicaList;

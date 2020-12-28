@@ -39,7 +39,7 @@ public class Logger {
         try {
             fOut.write(rawString + "\n");
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("[logger] stream to output file already closed... cannot store this string");
         }
     }
 

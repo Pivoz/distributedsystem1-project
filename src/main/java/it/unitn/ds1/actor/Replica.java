@@ -9,14 +9,14 @@ import it.unitn.ds1.logger.Logger;
 import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
-import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
-    private final int MAX_TIMEOUT = 3000; //3 seconds
-    private final int IS_ALIVE_TIMEOUT = 1500; //ONLY FOR COORDINATOR
-    private final int MAX_ELECTION_TIMEOUT = 1000; //1 seconds
+    private final int MAX_TIMEOUT = 3000;           //3 seconds
+    private final int IS_ALIVE_TIMEOUT = 1500;      //ONLY FOR COORDINATOR
+    private final int MAX_ELECTION_TIMEOUT = 3000;  //3 seconds
+    private final int MAX_NETWORK_DELAY = 2000;     //2 seconds
 
     private List<ActorRef> group; // the list of peers (the multicast group)
     private ActorRef coordinator;
@@ -221,13 +221,11 @@ public class Replica extends AbstractActor {
         }
         else {
             isElectionInProgress = true;
-            //System.out.println("\n\nReplica: " + id + "\nHistory:" + history.size());
+            System.out.println("\n\nReplica: " + id + "\nHistory:" + history.size());
             //System.err.println("----replica"+id+"------------ " + msg.lastSequenceNumberPerActor.size() + " ------------------------");
             msg.lastSequenceNumberPerActor.set(id, history.get(history.size() - 1).sequenceNumber);
             ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor);
             sendElectionToNextReplica(updatedElectionMsg);
-
-
         }
 
         if (!this.sender().equals(getSelf())) {
@@ -350,9 +348,11 @@ public class Replica extends AbstractActor {
         if (this.isCrashed)
             return;
 
-        //TODO: implement network time delay
+        int networkDelay = (int) (Math.random() * MAX_NETWORK_DELAY);
+        try {
+            Thread.sleep(networkDelay);
+        } catch (InterruptedException ignored) {}
 
-        //System.out.println("SENDMESSAGE: " + isCrashed + " " + destination.path().name() + " " + sender.path().name());
         if (destination != null) {
             System.out.println("Sending message from " + sender.path().name() + " to " + destination.path().name() + ": " + message.getClass().getSimpleName());
             if (message.getClass().getSimpleName().equals("AckMessage")){
