@@ -95,8 +95,6 @@ public class Replica extends AbstractActor {
             sendMessage(coordinator, update, getSelf());
 
             updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), initializeElectionMessage(), false));
-
-            //System.err.println("DEBUG replica "+id+": " + getCapacity(electionMsg.lastSequenceNumberPerActor));
         }
     }
 
@@ -333,11 +331,19 @@ public class Replica extends AbstractActor {
     }
 
     private void sendElectionToNextReplica(ElectionMsg msg) {
-        sendMessage(group.get((id + 1) % group.size()), msg, getSelf());
+
+        int index = 1;
+        ActorRef nextNonNullReplica = group.get((id + index) % group.size());
+        while (nextNonNullReplica == null){
+            index++;
+            nextNonNullReplica = group.get((id + index) % group.size());
+        }
+
+        sendMessage(nextNonNullReplica, msg, getSelf());
         if(electionTimer != null) {
             electionTimer.cancel();
         }
-        electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, group.get((id + 2) % group.size()), msg, false);
+        electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, group.get((id + index + 1) % group.size()), msg, false);
     }
 
     private void sendMessage(ActorRef destination, Serializable message, ActorRef sender){

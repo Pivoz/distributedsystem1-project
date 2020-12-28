@@ -15,6 +15,7 @@ public class Client extends AbstractActor {
 
     private int id;
     private final int MESSAGE_INTERVAL_SECONDS = 1;
+    private final int READ_TIMEOUT_SECONDS = 3;
 
     private List<ActorRef> replicaList;
     private Cancellable timeout = null;
@@ -76,7 +77,7 @@ public class Client extends AbstractActor {
                 System.err.println("[" + getSelf().path().name() + "] there is still a pending timeout... cannot set another one");
             else
                 timeout = getContext().system().scheduler().scheduleOnce(
-                        Duration.create(3, TimeUnit.SECONDS),
+                        Duration.create(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS),
                         getSelf(),
                         new ClientReadTimeout(replicaPosition),
                         getContext().system().dispatcher(),
