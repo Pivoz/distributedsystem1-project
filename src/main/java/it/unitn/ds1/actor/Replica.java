@@ -68,6 +68,7 @@ public class Replica extends AbstractActor {
                 .match(ElectionMsg.class,               this::onElectionMsg)
                 .match(SyncMsg.class,                   this::onSyncMsg)
                 .match(IsAliveMsg.class,                this::onIsAliveMsg)
+                .match(IsDeadMsg.class,                 this::onIsDeadMsg)
                 .build();
     }
 
@@ -82,6 +83,8 @@ public class Replica extends AbstractActor {
         currentEpoch++;
 
         isAliveTimer = setIsAliveTimer();
+        //crashIfReplica(0);
+        //crashIfReplica(2);
     }
 
     /**
@@ -140,7 +143,7 @@ public class Replica extends AbstractActor {
                     broadcastMsg(ok, Arrays.asList(getSelf()));
                     Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
 
-                    crashIfCoordinator();
+                    //crashIfCoordinator();
                 }
                 break;
             case ELECTION:
@@ -194,7 +197,7 @@ public class Replica extends AbstractActor {
     private void onElectionMsg(ElectionMsg msg) {
         System.err.println("SENDER ELECTION = " + this.sender());
 
-        //Remove the crashed coodinator from the replica group
+        //Remove the crashed coordinator from the replica group
         for (int i=0; i<group.size(); i++) {
             if (group.get(i) != null && group.get(i).equals(coordinator)) {
                 group.set(i, null);
@@ -223,7 +226,12 @@ public class Replica extends AbstractActor {
             isElectionInProgress = true;
             System.out.println("\n\nReplica: " + id + "\nHistory:" + history.size());
             //System.err.println("----replica"+id+"------------ " + msg.lastSequenceNumberPerActor.size() + " ------------------------");
-            msg.lastSequenceNumberPerActor.set(id, history.get(history.size() - 1).sequenceNumber);
+            if(history.size() > 0) {
+                msg.lastSequenceNumberPerActor.set(id, history.get(history.size() - 1).sequenceNumber);
+            }
+            else{
+                msg.lastSequenceNumberPerActor.set(id, 0);
+            }
             ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor);
             sendElectionToNextReplica(updatedElectionMsg);
         }
@@ -260,6 +268,12 @@ public class Replica extends AbstractActor {
             }
             isAliveTimer = setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), initializeElectionMessage(), false);
         }
+    }
+
+    private void onIsDeadMsg(IsDeadMsg msg){
+        group.set(msg.id, null);
+        ElectionMsg electionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor);
+        sendElectionToNextReplica(electionMsg);
     }
 
 
@@ -341,7 +355,9 @@ public class Replica extends AbstractActor {
         if(electionTimer != null) {
             electionTimer.cancel();
         }
-        electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, group.get((id + index + 1) % group.size()), msg, false);
+
+        IsDeadMsg isDead = new IsDeadMsg((id + index) % group.size(), msg.lastSequenceNumberPerActor);
+        electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, getSelf(), isDead, false);
     }
 
     private void sendMessage(ActorRef destination, Serializable message, ActorRef sender){
@@ -393,7 +409,7 @@ public class Replica extends AbstractActor {
     private ElectionMsg initializeElectionMessage(){
         List<Integer> list = new ArrayList<>();
         for (int i=0; i<group.size(); i++)
-            list.add(0);
+            list.add(-1);
 
         return new ElectionMsg(list);
     }
