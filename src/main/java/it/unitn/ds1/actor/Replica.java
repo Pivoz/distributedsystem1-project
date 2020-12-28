@@ -13,10 +13,10 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
-    private final int MAX_TIMEOUT = 3000;           //3 seconds
+    private final int MAX_TIMEOUT = 2000;           //1 second
     private final int IS_ALIVE_TIMEOUT = 1500;      //ONLY FOR COORDINATOR
     private final int MAX_ELECTION_TIMEOUT = 3000;  //3 seconds
-    private final int MAX_NETWORK_DELAY = 2000;     //2 seconds
+    private final int MAX_NETWORK_DELAY = 100;      //1 second
 
     private List<ActorRef> group; // the list of peers (the multicast group)
     private ActorRef coordinator;
@@ -97,7 +97,7 @@ public class Replica extends AbstractActor {
             ReplicaMessage update = new ReplicaMessage(msg.value);
             sendMessage(coordinator, update, getSelf());
 
-            updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), initializeElectionMessage(), false));
+            updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false));
         }
     }
 
@@ -134,13 +134,15 @@ public class Replica extends AbstractActor {
                 break;
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.value);
-                if(ackNumber == group.size()/2) {
+                System.out.println("AckMap " + msg.value + ": " + ack.keySet().toString() + " --- " + ack.values().toString());
+                if(ackNumber == group.size()/2 + 1) {
                     currentSeqNumber++;
                     WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
                     int bufferedMsg = removeMessageFromBuffer(msg.value);
                     ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
                     history.add(replicaMsg);
                     broadcastMsg(ok, Arrays.asList(getSelf()));
+                    ack.remove(msg.value);
                     Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
 
                     //crashIfCoordinator();
@@ -266,7 +268,7 @@ public class Replica extends AbstractActor {
             if(this.isAliveTimer != null) {
                 this.isAliveTimer.cancel();
             }
-            isAliveTimer = setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), initializeElectionMessage(), false);
+            isAliveTimer = setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false);
         }
     }
 
