@@ -13,9 +13,9 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
-    private final int MAX_TIMEOUT = 2000;
+    private final int MAX_TIMEOUT = 3000;
     private final int IS_ALIVE_TIMEOUT = 1500;      //ONLY FOR COORDINATOR
-    private final int MAX_ELECTION_TIMEOUT = 3000;
+    private final int MAX_ELECTION_TIMEOUT = 1500;
     private final int MAX_NETWORK_DELAY = 100;
 
     private List<ActorRef> group; // the list of peers (the multicast group)
@@ -95,7 +95,7 @@ public class Replica extends AbstractActor {
      * @param msg
      */
     private void onClientUpdateRequestMsg(ClientUpdateRequestMsg msg) {
-        if(!isElectionInProgress) {
+        if(coordinator != null) {
             ReplicaMessage update = new ReplicaMessage(msg.value);
             sendMessage(coordinator, update);
 
@@ -109,18 +109,19 @@ public class Replica extends AbstractActor {
      * @param msg
      */
     public void onReplicaMsg(ReplicaMessage msg) {
-        if(coordinator.equals(getSelf())){
-            ack.put(ackId, 1);
-            broadCastUpdateRequest(msg);
-            ackId++;
-        }
-        else {
-            buffer.add(msg.value);
-            if(currentSeqNumber < msg.sequenceNumber) {
-                currentSeqNumber = msg.sequenceNumber;
+        if(coordinator != null) {
+            if (coordinator.equals(getSelf())) {
+                ack.put(ackId, 1);
+                broadCastUpdateRequest(msg);
+                ackId++;
+            } else {
+                buffer.add(msg.value);
+                if (currentSeqNumber < msg.sequenceNumber) {
+                    currentSeqNumber = msg.sequenceNumber;
+                }
+                AckMessage ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
+                sendMessage(coordinator, ackMessage);
             }
-            AckMessage ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
-            sendMessage(coordinator, ackMessage);
         }
     }
 
@@ -171,10 +172,16 @@ public class Replica extends AbstractActor {
     public void onWriteOKMsg(WriteOKMessage msg) {
         currentSeqNumber = msg.sequenceNumber;
         int bufferedMsg = removeMessageFromBuffer(msg.value);
-        ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, bufferedMsg);
+        ReplicaMessage replicaMsg;
+        if(msg.epoch == -1) {
+            replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
+            Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
+        }
+        else {
+            replicaMsg = new ReplicaMessage(msg.epoch, msg.sequenceNumber, msg.value);
+            Logger.getInstance().logReplicaUpdate(getSelf().path().name(), msg.epoch, currentSeqNumber, replicaMsg.value);
+        }
         history.add(replicaMsg);
-
-        Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
     }
 
     /**
@@ -182,18 +189,24 @@ public class Replica extends AbstractActor {
      * @param msg
      */
     public void onReadRequest(ReadRequestMessage msg) {
-        ReadResponseMessage msgToSend;
-        Logger logger = Logger.getInstance();
-        logger.logReadRequest(this.sender().path().name(), getSelf().path().name());
+        if (!isElectionInProgress) {
+            ReadResponseMessage msgToSend;
+            Logger logger = Logger.getInstance();
+            logger.logReadRequest(this.sender().path().name(), getSelf().path().name());
 
-        if (history.size() > 0) {
-            ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
-            msgToSend = new ReadResponseMessage(currentMsg.value);
-        } else {
-            msgToSend = new ReadResponseMessage(-1);
+            if (history.size() > 0) {
+                ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
+                msgToSend = new ReadResponseMessage(currentMsg.value);
+                logger.log(this.sender().path().name() + " read from Replica" + this.id + " value: " + msgToSend.getValue() + " - Status: " + currentMsg.epoch + ":" + currentMsg.sequenceNumber + " history size: " + history.size());
+            } else {
+                msgToSend = new ReadResponseMessage(-1);
+                logger.log(this.sender().path().name() + " read from Replica" + this.id + " value: -1 (history empty)");
+            }
+            logger.logReadResult(this.sender().path().name(), msgToSend.getValue());
+            sendMessage(this.sender(), msgToSend);
+
+
         }
-        sendMessage(this.sender(), msgToSend);
-        logger.logReadResult(this.sender().path().name(), msgToSend.getValue());
     }
 
     /**
@@ -222,9 +235,18 @@ public class Replica extends AbstractActor {
             if(getSelf().equals(group.get(maxIndex))){
                 SyncMsg syncMsg = new SyncMsg(getSelf());
                 broadcastMsg(syncMsg,Arrays.asList(getSelf()));
+                coordinator = getSelf();
+                //Recovering history from most updated replica aka the new coordinator
+                for(int i=0; i<msg.lastSequenceNumberPerActor.size(); i++){
+                    if(group.get(i) != null && !group.get(i).equals(getSelf()) && msg.lastSequenceNumberPerActor.get(id) > msg.lastSequenceNumberPerActor.get(i)){
+                        recoverHistory(msg.lastSequenceNumberPerActor.get(i), group.get(i));
+                    }
+                }
+                Logger.getInstance().log("Status: " + msg.lastSequenceNumberPerActor.toString());
                 currentEpoch++;
                 currentSeqNumber = 0;
-                coordinator = getSelf();
+
+                resetTimers();
                 isAliveTimer = setIsAliveTimer();
             }
             else {
@@ -232,6 +254,7 @@ public class Replica extends AbstractActor {
             }
         }
         else {
+            Logger.getInstance().signalStartElection("From replica " + id);
             isElectionInProgress = true;
             System.out.println("\n\nReplica: " + id + "\nHistory:" + history.size());
             //System.err.println("----replica"+id+"------------ " + msg.lastSequenceNumberPerActor.size() + " ------------------------");
@@ -262,12 +285,13 @@ public class Replica extends AbstractActor {
         System.err.println("NEW COORDINATOR FROM REPLICA" + id + " is " + coordinator.path().name());
         this.currentEpoch++;
         currentSeqNumber = 0;
+        resetTimers();
         //Restart the is-alive timer
         isAliveTimer = setIsAliveTimer();
     }
 
     private void onIsAliveMsg(IsAliveMsg msg) {
-        if(coordinator.equals(getSelf())){
+        if(coordinator != null && coordinator.equals(getSelf())){
             IsAliveMsg alive = new IsAliveMsg();
             broadcastMsg(alive, Arrays.asList(getSelf()));
         }
@@ -285,8 +309,14 @@ public class Replica extends AbstractActor {
         sendElectionToNextReplica(electionMsg);
     }
 
-
     /* -- Actor utils ----------------------------------------------------- */
+
+    private void recoverHistory(int fromSeqNumber, ActorRef dest){
+        for(int i = fromSeqNumber; i < history.size(); i++){
+            WriteOKMessage ok = new WriteOKMessage(currentEpoch, i, history.get(i).value);
+            sendMessage(dest, ok);
+        }
+    }
 
     private int removeMessageFromBuffer(int value){
         for(int i=0; i<buffer.size(); i++) {
@@ -295,7 +325,7 @@ public class Replica extends AbstractActor {
                 return buffer.remove(i);
             }
         }
-        throw new RuntimeException("Buffer is empty! " + buffer.size());
+        return -1; //buffer is empty or does not contain that value
     }
 
     private void broadCastUpdateRequest(ReplicaMessage msg) {
@@ -325,6 +355,11 @@ public class Replica extends AbstractActor {
     private void broadcastMsg(Serializable msg, List<ActorRef> replicasToExclude) {
         for (ActorRef replica : group) {
             if (!replicasToExclude.contains(replica)) {
+                if(msg instanceof WriteOKMessage && currentSeqNumber % 4 == 0 &&
+                        (replica!= null && replica.equals(group.get(5)))){
+                    this.crash();
+                    return;
+                }
                 sendMessage(replica, msg);
             }
         }
@@ -371,7 +406,14 @@ public class Replica extends AbstractActor {
         ActorRef nextNonNullReplica;
         do {
             index++;
+            System.out.println("Next not null replica: " + id + " + " + index + " size: " + group.size());
             nextNonNullReplica = group.get((id + index) % group.size());
+
+            if (index > group.size()) {
+                crash();
+                throw new RuntimeException("Replica" + id + ": there aren't any alive replicas");
+            }
+
         } while (nextNonNullReplica == null);
 
         sendMessage(nextNonNullReplica, msg);
@@ -415,6 +457,11 @@ public class Replica extends AbstractActor {
 
         getContext().stop(getSelf());
 
+        //Cancel all the timers of the crashed replica
+        resetTimers();
+    }
+
+    private void resetTimers() {
         //Cancel all the timers of the crashed replica
         if (electionTimer != null)
             electionTimer.cancel();
@@ -468,6 +515,7 @@ public class Replica extends AbstractActor {
      */
     private Cancellable setIsAliveTimer(){
         if(coordinator.equals(getSelf())) {
+            System.out.println("COORDINATOR IS_ALIVE: " + id);
             return setTimeout(IS_ALIVE_TIMEOUT, getSelf(), new IsAliveMsg(), true);
         }
         else{
