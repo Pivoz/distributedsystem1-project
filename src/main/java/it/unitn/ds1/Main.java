@@ -13,8 +13,8 @@ import java.util.List;
 
 public class Main {
 
-    public static final int N_CLIENTS = 10;
-    public static final int N_REPLICAS = 15;
+    public static final int N_CLIENTS = 5;
+    public static final int N_REPLICAS = 10;
 
     public static void main(String[] args) {
         // Create the actor system
