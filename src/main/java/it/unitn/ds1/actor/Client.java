@@ -69,20 +69,20 @@ public class Client extends AbstractActor {
         int replicaPosition = (int) (Math.random() * replicaList.size());
 
         if (dice < 8) {
+            //If the timeout isn't null there is a pending operation -> skip
+            if (timeout != null)
+                return;
+
             replicaList.get(replicaPosition).tell(new ReadRequestMessage(), getSelf());
             System.out.println("[" + getSelf().path().name() + "] raised a read request to " + replicaList.get(replicaPosition).path().name());
 
-            //Set a timeout for the read operation
-            if (timeout != null)
-                System.err.println("[" + getSelf().path().name() + "] there is still a pending timeout... cannot set another one");
-            else
-                timeout = getContext().system().scheduler().scheduleOnce(
-                        Duration.create(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS),
-                        getSelf(),
-                        new ClientReadTimeout(replicaPosition),
-                        getContext().system().dispatcher(),
-                        getSelf()
-                );
+            timeout = getContext().system().scheduler().scheduleOnce(
+                    Duration.create(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                    getSelf(),
+                    new ClientReadTimeout(replicaPosition),
+                    getContext().system().dispatcher(),
+                    getSelf()
+            );
         }
         else {
             int newValue = (int) (Math.random() * 1000000);

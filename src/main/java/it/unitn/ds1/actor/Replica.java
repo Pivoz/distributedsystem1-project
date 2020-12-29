@@ -382,7 +382,6 @@ public class Replica extends AbstractActor {
     }
 
     private void crash(){
-        //this.isCrashed = true;
         System.err.println("REPLICA " + id + " CRASHED!");
 
         getContext().stop(getSelf());
