@@ -13,24 +13,25 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
-    private final int MAX_TIMEOUT = 2000;           //1 second
+    private final int MAX_TIMEOUT = 2000;
     private final int IS_ALIVE_TIMEOUT = 1500;      //ONLY FOR COORDINATOR
-    private final int MAX_ELECTION_TIMEOUT = 3000;  //3 seconds
-    private final int MAX_NETWORK_DELAY = 100;      //1 second
+    private final int MAX_ELECTION_TIMEOUT = 3000;
+    private final int MAX_NETWORK_DELAY = 100;
 
     private List<ActorRef> group; // the list of peers (the multicast group)
     private ActorRef coordinator;
-    private List<Integer> buffer; //list of message to ack
-    private List<ReplicaMessage> history;
+    private List<Integer> buffer; //list of messages to ack
+    private List<ReplicaMessage> history; //history of messages
     private int currentEpoch;
     private int currentSeqNumber;
-    private Map<Integer, Integer> ack; //COORDINATOR: keep count of every ack before WRITEOK <seq num : ack count >
+    private Map<Integer, Integer> ack; //COORDINATOR: keep count of every ack before WRITEOK < value : ack count >
     private final int id;         // ID of the current actor
     private boolean isElectionInProgress;
     private Cancellable isAliveTimer;
     private Map<Integer, Cancellable> updateRequestTimers;
     private Cancellable electionTimer;
     private boolean isCrashed;
+    private int ackId; //used by coordinator to keep track of ack
 
     /* -- Actor constructor --------------------------------------------------- */
     public Replica(int id) {
@@ -46,6 +47,7 @@ public class Replica extends AbstractActor {
         this.updateRequestTimers = new HashMap<Integer, Cancellable>();
         this.electionTimer = null;
         this.isCrashed = false;
+        this.ackId = 0;
     }
 
     static public Props props(int id) {
@@ -95,7 +97,7 @@ public class Replica extends AbstractActor {
     private void onClientUpdateRequestMsg(ClientUpdateRequestMsg msg) {
         if(!isElectionInProgress) {
             ReplicaMessage update = new ReplicaMessage(msg.value);
-            sendMessage(coordinator, update, getSelf());
+            sendMessage(coordinator, update);
 
             updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false));
         }
@@ -108,15 +110,17 @@ public class Replica extends AbstractActor {
      */
     public void onReplicaMsg(ReplicaMessage msg) {
         if(coordinator.equals(getSelf())){
+            ack.put(ackId, 1);
             broadCastUpdateRequest(msg);
+            ackId++;
         }
         else {
             buffer.add(msg.value);
             if(currentSeqNumber < msg.sequenceNumber) {
                 currentSeqNumber = msg.sequenceNumber;
             }
-            AckMessage ackMessage = new AckMessage(msg.value, AckType.COORDUPDATEREQUEST);
-            sendMessage(coordinator, ackMessage, getSelf());
+            AckMessage ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
+            sendMessage(coordinator, ackMessage);
         }
     }
 
@@ -133,7 +137,7 @@ public class Replica extends AbstractActor {
                 }
                 break;
             case COORDUPDATEREQUEST:
-                int ackNumber = incrementAck(msg.value);
+                int ackNumber = incrementAck(msg.id);
                 System.out.println("AckMap " + msg.value + ": " + ack.keySet().toString() + " --- " + ack.values().toString());
                 if(ackNumber == group.size()/2 + 1) {
                     currentSeqNumber++;
@@ -142,7 +146,7 @@ public class Replica extends AbstractActor {
                     ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
                     history.add(replicaMsg);
                     broadcastMsg(ok, Arrays.asList(getSelf()));
-                    ack.remove(msg.value);
+                    ack.remove(msg.id);
                     Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
 
                     //crashIfCoordinator();
@@ -156,6 +160,9 @@ public class Replica extends AbstractActor {
                 break;
         }
     }
+
+
+
 
     /**
      * Check on buffer corresponding seq. num. then put into history
@@ -185,7 +192,7 @@ public class Replica extends AbstractActor {
         } else {
             msgToSend = new ReadResponseMessage(-1);
         }
-        sendMessage(this.sender(), msgToSend, getSelf());
+        sendMessage(this.sender(), msgToSend);
         logger.logReadResult(this.sender().path().name(), msgToSend.getValue());
     }
 
@@ -240,7 +247,7 @@ public class Replica extends AbstractActor {
 
         if (!this.sender().equals(getSelf())) {
             AckMessage ack = new AckMessage(AckType.ELECTION);
-            sendMessage(this.sender(), ack, getSelf());
+            sendMessage(this.sender(), ack);
         }
     }
 
@@ -292,36 +299,45 @@ public class Replica extends AbstractActor {
     }
 
     private void broadCastUpdateRequest(ReplicaMessage msg) {
-        ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value);
+        ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, ackId);
         buffer.add(msg.value);
         broadcastMsg(update, Arrays.asList(getSelf()));
         AckMessage ackMessage = new AckMessage(msg.value, AckType.UPDATEREQUEST);
-        sendMessage(this.sender(), ackMessage, getSelf());
+        sendMessage(this.sender(), ackMessage);
     }
 
-    private int incrementAck(int value) {
-        System.out.println("ACK DEBUG: " + value + " --- " + ack.keySet().toString());
-        int ackNumber;
-        if(ack.containsKey(value)) {
-            ackNumber = ack.get(value);
+    private int incrementAck(int id) {
+        System.out.println("ACK DEBUG: " + id + " --- " + ack.keySet().toString());
+        int ackNumber = 0;
+        if(ack.containsKey(id)) {
+            ackNumber = ack.get(id);
             ackNumber++;
-            ack.put(value, ackNumber);
-        }
-        else{
-            ackNumber = 1;
-            ack.put(value, ackNumber);
+            ack.put(id, ackNumber);
         }
         return ackNumber;
     }
 
+    /**
+     * Send a message to all excluding the specified replicas
+     * @param msg message to send
+     * @param replicasToExclude list of replicas to exclude
+     */
     private void broadcastMsg(Serializable msg, List<ActorRef> replicasToExclude) {
         for (ActorRef replica : group) {
             if (!replicasToExclude.contains(replica)) {
-                sendMessage(replica, msg, getSelf());
+                sendMessage(replica, msg);
             }
         }
     }
 
+    /**
+     * Simple implementation of Akka Scheduler to set timeout based on if it will be recurrent or not
+     * @param millis time before scheduling, used also as interval
+     * @param destination destination of message on timer expiration
+     * @param msgToSend message to send
+     * @param isRecurrent if true set the interval and the timeout, otherwise only the timeout
+     * @return
+     */
     private Cancellable setTimeout(int millis, ActorRef destination, Serializable msgToSend, boolean isRecurrent) {
         if(isRecurrent){
             return getContext().system().scheduler().scheduleWithFixedDelay(
@@ -344,16 +360,21 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * Retrieve the next not null replica in the ring and send the Election Message.
+     * Then initialize a timer in case of Replica not responding sending an IsDead message
+     * @param msg Election message to send
+     */
     private void sendElectionToNextReplica(ElectionMsg msg) {
 
-        int index = 1;
-        ActorRef nextNonNullReplica = group.get((id + index) % group.size());
-        while (nextNonNullReplica == null){
+        int index = 0;
+        ActorRef nextNonNullReplica;
+        do {
             index++;
             nextNonNullReplica = group.get((id + index) % group.size());
-        }
+        } while (nextNonNullReplica == null);
 
-        sendMessage(nextNonNullReplica, msg, getSelf());
+        sendMessage(nextNonNullReplica, msg);
         if(electionTimer != null) {
             electionTimer.cancel();
         }
@@ -362,7 +383,12 @@ public class Replica extends AbstractActor {
         electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, getSelf(), isDead, false);
     }
 
-    private void sendMessage(ActorRef destination, Serializable message, ActorRef sender){
+    /**
+     * Simulate a network delay before sending a message
+     * @param destination the Replica to send the message
+     * @param message any type of message defined in the system
+     */
+    private void sendMessage(ActorRef destination, Serializable message){
         if (this.isCrashed)
             return;
 
@@ -372,15 +398,18 @@ public class Replica extends AbstractActor {
         } catch (InterruptedException ignored) {}
 
         if (destination != null) {
-            System.out.println("Sending message from " + sender.path().name() + " to " + destination.path().name() + ": " + message.getClass().getSimpleName());
+            System.out.println("Sending message from " + getSelf().path().name() + " to " + destination.path().name() + ": " + message.getClass().getSimpleName());
             if (message.getClass().getSimpleName().equals("AckMessage")){
                 AckMessage ack = (AckMessage) message;
                 System.out.println("ACK TYPE: " + ack.ackType);
             }
-            destination.tell(message, sender);
+            destination.tell(message, getSelf());
         }
     }
 
+    /**
+     * When invoked stops the Replica and cancel all timers of that Replica
+     */
     private void crash(){
         //this.isCrashed = true;
         System.err.println("REPLICA " + id + " CRASHED!");
@@ -408,6 +437,11 @@ public class Replica extends AbstractActor {
             this.crash();
     }
 
+    /**
+     * Initialize list of seq number with value -1 for each Replica since if crash occurs at very beginning the max seq
+     * number is 0
+     * @return ElectionMsg with initialized list
+     */
     private ElectionMsg initializeElectionMessage(){
         List<Integer> list = new ArrayList<>();
         for (int i=0; i<group.size(); i++)
@@ -416,6 +450,9 @@ public class Replica extends AbstractActor {
         return new ElectionMsg(list);
     }
 
+    /**
+     * Stops isAlive and updateRequest timers since election is in progress
+     */
     private void stopTimersDuringElection(){
         if (isAliveTimer != null)
             isAliveTimer.cancel();
@@ -426,6 +463,10 @@ public class Replica extends AbstractActor {
         updateRequestTimers = new HashMap<>();
     }
 
+    /**
+     * If coordinator set timer to send IsAliveMsg, else set timer to initialize election
+     * @return
+     */
     private Cancellable setIsAliveTimer(){
         if(coordinator.equals(getSelf())) {
             return setTimeout(IS_ALIVE_TIMEOUT, getSelf(), new IsAliveMsg(), true);
