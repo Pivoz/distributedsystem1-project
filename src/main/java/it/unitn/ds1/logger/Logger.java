@@ -35,7 +35,9 @@ public class Logger {
     public void log(String rawString){
         if (fOut == null)
             throw new NullPointerException();
-
+        if(rawString == null){
+            throw new RuntimeException("nullino");
+        }
         try {
             fOut.write(rawString + "\n");
         } catch (IOException e) {
@@ -53,6 +55,10 @@ public class Logger {
 
     public void logReadResult(String clientID, int value){
         this.log("Client " + clientID + " read done " + value);
+    }
+
+    public void signalStartElection(String text){
+        this.log("###### " + text + " ######");
     }
 
     public void close(){
