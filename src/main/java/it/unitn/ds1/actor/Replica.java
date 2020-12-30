@@ -6,6 +6,7 @@ import akka.actor.Cancellable;
 import akka.actor.Props;
 import it.unitn.ds1.actor.message.*;
 import it.unitn.ds1.logger.Logger;
+import javafx.util.Pair;
 import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
@@ -28,7 +29,7 @@ public class Replica extends AbstractActor {
     private final int id;         // ID of the current actor
     private boolean isElectionInProgress;
     private Cancellable isAliveTimer;
-    private Map<Integer, Cancellable> updateRequestTimers;
+    private List<Pair<Integer, Cancellable>> updateRequestTimers;
     private Cancellable electionTimer;
     private boolean isCrashed;
     private int ackId; //used by coordinator to keep track of ack
@@ -44,7 +45,7 @@ public class Replica extends AbstractActor {
         this.ack = new HashMap<Integer, Integer>();
         this.isElectionInProgress = false;
         this.isAliveTimer = null;
-        this.updateRequestTimers = new HashMap<Integer, Cancellable>();
+        this.updateRequestTimers = new ArrayList<>();
         this.electionTimer = null;
         this.isCrashed = false;
         this.ackId = 0;
@@ -97,7 +98,8 @@ public class Replica extends AbstractActor {
         if(!isElectionInProgress) {
             ReplicaMessage update = new ReplicaMessage(msg.value);
             sendMessage(coordinator, update);
-            updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false));
+            Pair<Integer, Cancellable> timerForValue = new Pair(msg.value, setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false));
+            updateRequestTimers.add(timerForValue);
         }
     }
 
@@ -142,20 +144,17 @@ public class Replica extends AbstractActor {
     public void onAckMsg(AckMessage msg) {
         switch (msg.ackType){
             case UPDATEREQUEST:
-                if(this.updateRequestTimers.containsKey(msg.value)) {
-                    this.updateRequestTimers.remove(msg.value).cancel();
+                for(Pair<Integer,Cancellable> timer : updateRequestTimers){
+                    if(timer.getKey() == msg.value){
+                        timer.getValue().cancel();
+                        updateRequestTimers.remove(timer);
+                        break;
+                    }
                 }
                 break;
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.id);
-                //System.err.println("ACKNUMBER for " + msg.id + " is " + ackNumber);
                 if(ackNumber == group.size()/2 + 1) {
-
-                    if(id == 0){
-                        this.crash();
-                        return;
-                    }
-
                     ack.remove(msg.id);
                     currentSeqNumber++;
                     WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
@@ -163,8 +162,6 @@ public class Replica extends AbstractActor {
                     ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
                     history.add(replicaMsg);
                     broadcastMsg(ok);
-                    //System.err.println("Storing " + msg.value);
-
                     Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
                 }
                 break;
@@ -421,9 +418,6 @@ public class Replica extends AbstractActor {
 
         sendMessage(nextNonNullReplica, msg);
 
-        if (id == 1)
-            crash();
-
         if(electionTimer != null) {
             electionTimer.cancel();
         }
@@ -457,8 +451,10 @@ public class Replica extends AbstractActor {
         if (isAliveTimer != null)
             isAliveTimer.cancel();
 
-        for (Cancellable timer : updateRequestTimers.values())
-            timer.cancel();
+        for (Pair<Integer, Cancellable> timer : updateRequestTimers) {
+            timer.getValue().cancel();
+            updateRequestTimers.remove(timer);
+        }
 
         getContext().stop(getSelf());
         System.err.println("ID: " + id + " has CRASHED");
@@ -484,10 +480,11 @@ public class Replica extends AbstractActor {
         if (isAliveTimer != null)
             isAliveTimer.cancel();
 
-        for (Cancellable timer : updateRequestTimers.values())
-            timer.cancel();
+        for (Pair<Integer, Cancellable> timer : updateRequestTimers) {
+            timer.getValue().cancel();
+        }
 
-        updateRequestTimers = new HashMap<>();
+        updateRequestTimers = new ArrayList<>();
     }
 
     /**

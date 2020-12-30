@@ -4,6 +4,7 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
+import it.unitn.ds1.Main;
 import it.unitn.ds1.actor.message.*;
 import scala.concurrent.duration.Duration;
 
@@ -15,7 +16,7 @@ public class Client extends AbstractActor {
 
     private int id;
     private final int MESSAGE_INTERVAL_SECONDS = 2;
-    private final int READ_TIMEOUT_SECONDS = 10;
+    private final int READ_TIMEOUT_SECONDS = Main.N_REPLICAS;
 
     private List<ActorRef> replicaList;
     private Cancellable timeout = null;
@@ -66,7 +67,10 @@ public class Client extends AbstractActor {
 
         //Pr(read)=0.8, Pr(update)=0.2
         int dice = (int) (Math.random() * 10);
-        int replicaPosition = (int) (Math.random() * replicaList.size());
+        int replicaPosition;
+        do {
+            replicaPosition = (int) (Math.random() * replicaList.size());
+        } while (replicaList.get(replicaPosition) == null);
 
         if (dice < 8) {
             //If the timeout isn't null there is a pending operation -> skip
@@ -85,7 +89,7 @@ public class Client extends AbstractActor {
             );
         }
         else {
-            int newValue = (int) (Math.random() * 1000000);
+            int newValue = (int) (Math.random() * Integer.MAX_VALUE);
             replicaList.get(replicaPosition).tell(new ClientUpdateRequestMsg(newValue), getSelf());
             System.out.println("[" + getSelf().path().name() + "] raised an update request (newValue = " + newValue + ") to " + replicaList.get(replicaPosition).path().name());
         }
@@ -110,10 +114,10 @@ public class Client extends AbstractActor {
      * @param message
      * */
     private void onClientReadTimeoutMessage(ClientReadTimeout message){
-        System.out.println("[" + getSelf().path().name() + "] seems that replica " + message.getReplicaPosition() + " is not working properly. Removed from the replica list");
+        System.err.println("[" + getSelf().path().name() + "] seems that replica " + message.getReplicaPosition() + " is not working properly. Removed from the replica list");
 
         timeout = null;
-        replicaList.remove(message.getReplicaPosition());
+        replicaList.set(message.getReplicaPosition(), null);
     }
 
     /**
