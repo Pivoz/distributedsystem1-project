@@ -13,7 +13,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class Replica extends AbstractActor {
-    private final int MAX_TIMEOUT = 3000;
+    private final int MAX_TIMEOUT = 2000;
     private final int IS_ALIVE_TIMEOUT = 1500;      //ONLY FOR COORDINATOR
     private final int MAX_ELECTION_TIMEOUT = 1500;
     private final int MAX_NETWORK_DELAY = 100;
@@ -75,60 +75,69 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Invoked when we receive the initial message that contains the clients and replicas groups
-     * @param message
+     * Invoked when we receive the initial message that contains the clients and replicas groups.
+     * Init the List of ActorRef of this Replica and set as coordinator the first in the group.
+     * @param message : StartMessage from client
      * */
     public void onStartMessage(StartMessage message){
         this.group = new ArrayList<>(message.getReplicaList());
         //The initial coordinator is the first replica of the list
         coordinator = this.group.get(0);
         currentEpoch++;
-
         isAliveTimer = setIsAliveTimer();
-        //crashIfReplica(0);
-        //crashIfReplica(2);
     }
 
     /**
-     * Create new ReplicaMessage, put into buffer, send to coordinator,
+     * If no Election in progress:
+     * create new ReplicaMessage, put into buffer, send to coordinator,
      * start timer if expire COORDINATOR ELECTION
-     * @param msg
+     * @param msg : ClientUpdateRequestMsg from Client
      */
     private void onClientUpdateRequestMsg(ClientUpdateRequestMsg msg) {
-        if(coordinator != null) {
+        if(!isElectionInProgress) {
             ReplicaMessage update = new ReplicaMessage(msg.value);
             sendMessage(coordinator, update);
-
             updateRequestTimers.put(msg.value, setTimeout(MAX_TIMEOUT * group.size() + (id * 500), getSelf(), initializeElectionMessage(), false));
         }
     }
 
     /**
-     * if I'm coordinator, then broadcast UPDATE to others and send ACK to Replica issuing update,
-     * else if I'm a simple Replica register new message in buffer, ACK coordinator
-     * @param msg
+     * If no Election in progress:
+     * if I'm coordinator, then init the ACK list for this updated, put the new value in buffer, broadcast UPDATE to all replicas and ACK the sender of Update Request.
+     * Else if I'm a simple Replica, register new message in buffer, update the Seq Number with the one of Coordinator and ACK coordinator
+     * @param msg ReplicaMessage from Replica issuing Update or Coordinator if Update in progress
      */
     public void onReplicaMsg(ReplicaMessage msg) {
-        if(coordinator != null) {
+        if(!isElectionInProgress) {
+            AckMessage ackMessage;
             if (coordinator.equals(getSelf())) {
+                //System.err.println("Update request received by coordinator: " + msg.value + " using ackId: " + ackId);
                 ack.put(ackId, 1);
-                broadCastUpdateRequest(msg);
+                ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, ackId);
                 ackId++;
+                buffer.add(msg.value);
+                broadcastMsg(update);
+                ackMessage = new AckMessage(msg.value, AckType.UPDATEREQUEST);
+                sendMessage(this.sender(), ackMessage);
             } else {
                 buffer.add(msg.value);
                 if (currentSeqNumber < msg.sequenceNumber) {
                     currentSeqNumber = msg.sequenceNumber;
                 }
-                AckMessage ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
+                ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
                 sendMessage(coordinator, ackMessage);
+                //System.err.println("Replica" + id + " sent the ACk to coordinator for value " + msg.value + " with ackId: " + msg.ackId);
             }
         }
     }
 
     /**
-     * Stop the timeout corresponding to epoch e and sequence number i, then put message <e,i> from buffer to history,
-     * if I'm coordinator update the ack counter and check QUORUM if counter is greater or equal to N/2 (+ 1 that is the coordinator) then send WRITEOK
-     * @param msg
+     * Different behaviours based on ACK Type:
+     * - UPDATEREQUEST ACk: stop the updateRequestTimer
+     * - COORDUPDATEREQUEST ACK: this ACK is delivered only to Coordinator. Increment the number of ACK received for a specific value,
+     *   if I reach the QUORUM then remove ACK counter for that value and increment the SeqNumber, updated the history and broadcast a WRITEOK to other Replicas
+     * - ELECTION ACK: Stop the ElectionTimer
+     * @param msg : AckMessage from Replicas answering after receiving a Message
      */
     public void onAckMsg(AckMessage msg) {
         switch (msg.ackType){
@@ -139,18 +148,24 @@ public class Replica extends AbstractActor {
                 break;
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.id);
-                System.out.println("AckMap " + msg.value + ": " + ack.keySet().toString() + " --- " + ack.values().toString());
+                //System.err.println("ACKNUMBER for " + msg.id + " is " + ackNumber);
                 if(ackNumber == group.size()/2 + 1) {
+
+                    if(id == 0){
+                        this.crash();
+                        return;
+                    }
+
+                    ack.remove(msg.id);
                     currentSeqNumber++;
                     WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
-                    int bufferedMsg = removeMessageFromBuffer(msg.value);
+                    removeMessageFromBuffer(msg.value);
                     ReplicaMessage replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
                     history.add(replicaMsg);
-                    broadcastMsg(ok, Arrays.asList(getSelf()));
-                    ack.remove(msg.id);
-                    Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
+                    broadcastMsg(ok);
+                    //System.err.println("Storing " + msg.value);
 
-                    //crashIfCoordinator();
+                    Logger.getInstance().logReplicaUpdate(getSelf().path().name(), currentEpoch, currentSeqNumber, replicaMsg.value);
                 }
                 break;
             case ELECTION:
@@ -162,16 +177,15 @@ public class Replica extends AbstractActor {
         }
     }
 
-
-
-
     /**
-     * Check on buffer corresponding seq. num. then put into history
-     * @param msg
+     * When a Replica receive the WriteOKMessage, update the local SequenceNumber with the one of coordinator and remove the update value from buffer.
+     * If the message epoch is -1 then we are in a normal phase and we can create the new ReplicaMessage to put into history with the local epoch value.
+     * Otherwise we are in a Sync phase where the history is recovering, so we use the epoch inside the message to rebuild the correct flow of messages.
+     * @param msg : WriteOKMessage from coordinator
      */
     public void onWriteOKMsg(WriteOKMessage msg) {
         currentSeqNumber = msg.sequenceNumber;
-        int bufferedMsg = removeMessageFromBuffer(msg.value);
+        removeMessageFromBuffer(msg.value);
         ReplicaMessage replicaMsg;
         if(msg.epoch == -1) {
             replicaMsg = new ReplicaMessage(currentEpoch, msg.sequenceNumber, msg.value);
@@ -185,86 +199,63 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * If client request a read then answer with last message in history
-     * @param msg
+     * When a client issue a Read to a Replica, if there is no election in progress,
+     * send the last value in history or -1 if history empty using ReadResponseMessage
+     * @param msg : ReadRequestMessage from client
      */
     public void onReadRequest(ReadRequestMessage msg) {
         if (!isElectionInProgress) {
             ReadResponseMessage msgToSend;
             Logger logger = Logger.getInstance();
             logger.logReadRequest(this.sender().path().name(), getSelf().path().name());
-
             if (history.size() > 0) {
                 ReplicaMessage currentMsg = this.history.get(this.history.size() - 1);
                 msgToSend = new ReadResponseMessage(currentMsg.value);
-                logger.log(this.sender().path().name() + " read from Replica" + this.id + " value: " + msgToSend.getValue() + " - Status: " + currentMsg.epoch + ":" + currentMsg.sequenceNumber + " history size: " + history.size());
             } else {
                 msgToSend = new ReadResponseMessage(-1);
-                logger.log(this.sender().path().name() + " read from Replica" + this.id + " value: -1 (history empty)");
             }
             logger.logReadResult(this.sender().path().name(), msgToSend.getValue());
             sendMessage(this.sender(), msgToSend);
-
-
         }
     }
 
     /**
-     * If Election in progress check if max seq number is mine, if yes then broadcast SYNC with me as coord, otherwise
-     * forward the Election
-     * If Election not in progress, set current Replica last seq number and forward
-     * Finally ACK
-     * @param msg
+     * When Replica receive a Election message:
+     * If Election in progress, that means we already done a ring cycle, check if max seq number is mine, if yes then initialize the current Replica as coordinator otherwise forward the Election Message.
+     * If Election was not in progress, that means the Replica is receiving the Election for the first time, stop UpdateRequest and IsAlive timers to avoid starting new Elections, remove the Coordinator from local group of ActorRef, set the highest SeqNumber for my id and forward the Election to next Replica
+     * Finally ACK if I'm not the sender of ElectionMsg (this occurs when new Election start)
+     * @param msg : Election message from an active Replica
      */
     private void onElectionMsg(ElectionMsg msg) {
-        System.err.println("SENDER ELECTION = " + this.sender());
-
-        //Remove the crashed coordinator from the replica group
-        for (int i=0; i<group.size(); i++) {
-            if (group.get(i) != null && group.get(i).equals(coordinator)) {
-                group.set(i, null);
-                coordinator = null;
-            }
-        }
-
-        stopTimersDuringElection();
-
+        System.err.println("Election msg delivered to: " + getSelf().path().name() + " is Election in progress: " + isElectionInProgress + " --- " + msg.lastSequenceNumberPerActor.toString() );
         if(isElectionInProgress){
             Integer maxSeqNumber = Collections.max(msg.lastSequenceNumberPerActor);
             Integer maxIndex = msg.lastSequenceNumberPerActor.indexOf(maxSeqNumber);
             if(getSelf().equals(group.get(maxIndex))){
-                SyncMsg syncMsg = new SyncMsg(getSelf());
-                broadcastMsg(syncMsg,Arrays.asList(getSelf()));
-                coordinator = getSelf();
-                //Recovering history from most updated replica aka the new coordinator
-                for(int i=0; i<msg.lastSequenceNumberPerActor.size(); i++){
-                    if(group.get(i) != null && !group.get(i).equals(getSelf()) && msg.lastSequenceNumberPerActor.get(id) > msg.lastSequenceNumberPerActor.get(i)){
-                        recoverHistory(msg.lastSequenceNumberPerActor.get(i), group.get(i));
-                    }
-                }
-                Logger.getInstance().log("Status: " + msg.lastSequenceNumberPerActor.toString());
-                currentEpoch++;
-                currentSeqNumber = 0;
 
-                resetTimers();
-                isAliveTimer = setIsAliveTimer();
+                initializeNewCoordinator(msg.lastSequenceNumberPerActor);
+                System.err.println("Replica" + id + " ELECTED (" + coordinator.path().name() + ")");
             }
             else {
-                sendElectionToNextReplica(msg);
+                ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL-1);
+                if(msg.TTL == 0) {
+                    updatedElectionMsg.lastSequenceNumberPerActor.set(maxIndex, -1);
+                }
+                sendElectionToNextReplica(updatedElectionMsg);
             }
         }
         else {
-            Logger.getInstance().signalStartElection("From replica " + id);
             isElectionInProgress = true;
-            System.out.println("\n\nReplica: " + id + "\nHistory:" + history.size());
-            //System.err.println("----replica"+id+"------------ " + msg.lastSequenceNumberPerActor.size() + " ------------------------");
+            stopTimersDuringElection();
+            //Remove the crashed coordinator from the replica
+            removeCrashedCoordinator();
             if(history.size() > 0) {
                 msg.lastSequenceNumberPerActor.set(id, history.get(history.size() - 1).sequenceNumber);
             }
             else{
                 msg.lastSequenceNumberPerActor.set(id, 0);
             }
-            ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor);
+            ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL-1);
             sendElectionToNextReplica(updatedElectionMsg);
         }
 
@@ -275,25 +266,34 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     *
-     * @param msg
+     * When receiving the SyncMessage the Replica stop the Election phase, set the current coordinator, increment Epoch and reset SequenceNumber.
+     * Finally restart the isAlive timer
+     * @param msg : SyncMsg from new elected Coordinator
      */
     private void onSyncMsg(SyncMsg msg) {
         this.isElectionInProgress = false;
-        this.coordinator = msg.coordinator;
+        if (electionTimer != null)
+            electionTimer.cancel();
 
-        System.err.println("NEW COORDINATOR FROM REPLICA" + id + " is " + coordinator.path().name());
+        this.coordinator = msg.coordinator;
         this.currentEpoch++;
         currentSeqNumber = 0;
-        resetTimers();
-        //Restart the is-alive timer
+
         isAliveTimer = setIsAliveTimer();
+
+        System.err.println("NEW COORD FOR: Replica" + id + " is " + coordinator.path().name());
     }
 
+    /**
+     * When receiving the isAliveMessage, if current Replica is the coordinator, it need to signal everyone it's alive with a broadcast,
+     * otherwise is a common Replica, so it resets the isAliveTimer to prevent an unwanted new Election.
+     * Timeout is delayed based on Replica Id and Replicas number to prevent simultaneous elections.
+     * @param msg : IsAliveMsg from current coordinator
+     */
     private void onIsAliveMsg(IsAliveMsg msg) {
         if(coordinator != null && coordinator.equals(getSelf())){
             IsAliveMsg alive = new IsAliveMsg();
-            broadcastMsg(alive, Arrays.asList(getSelf()));
+            broadcastMsg(alive);
         }
         else {
             if(this.isAliveTimer != null) {
@@ -303,14 +303,24 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * When a Replica receive the IsDeadMsg that means the next Replica in the ring is no more active,
+     * so it has to be removed from the local List of Replicas and forward the Election message to the next active Replica
+     * @param msg
+     */
     private void onIsDeadMsg(IsDeadMsg msg){
         group.set(msg.id, null);
-        ElectionMsg electionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor);
+        ElectionMsg electionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL);
         sendElectionToNextReplica(electionMsg);
     }
 
     /* -- Actor utils ----------------------------------------------------- */
 
+    /**
+     * Send multiple WriteOKMessage to Replica that need to recover lost updates. It is used by new elected coordinator.
+     * @param fromSeqNumber : the last sequence number received before the election
+     * @param dest : the Replica that needs to recover the updates
+     */
     private void recoverHistory(int fromSeqNumber, ActorRef dest){
         for(int i = fromSeqNumber; i < history.size(); i++){
             WriteOKMessage ok = new WriteOKMessage(currentEpoch, i, history.get(i).value);
@@ -318,6 +328,11 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * Removes the message waiting for approval from the buffer
+     * @param value : the value of update to remove
+     * @return the removed value from buffer or -1 if buffer empty (may occur when recovering history)
+     */
     private int removeMessageFromBuffer(int value){
         for(int i=0; i<buffer.size(); i++) {
             int bufferedValue = buffer.get(i);
@@ -328,16 +343,12 @@ public class Replica extends AbstractActor {
         return -1; //buffer is empty or does not contain that value
     }
 
-    private void broadCastUpdateRequest(ReplicaMessage msg) {
-        ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, ackId);
-        buffer.add(msg.value);
-        broadcastMsg(update, Arrays.asList(getSelf()));
-        AckMessage ackMessage = new AckMessage(msg.value, AckType.UPDATEREQUEST);
-        sendMessage(this.sender(), ackMessage);
-    }
-
+    /**
+     * Increment ack with specified id key
+     * @param id : key of ack to increment
+     * @return the incremented value or 0 if key not found.
+     */
     private int incrementAck(int id) {
-        System.out.println("ACK DEBUG: " + id + " --- " + ack.keySet().toString());
         int ackNumber = 0;
         if(ack.containsKey(id)) {
             ackNumber = ack.get(id);
@@ -348,18 +359,12 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Send a message to all excluding the specified replicas
-     * @param msg message to send
-     * @param replicasToExclude list of replicas to exclude
+     * Send a message to all Replicas in the group excluding the sender
+     * @param msg : message to send
      */
-    private void broadcastMsg(Serializable msg, List<ActorRef> replicasToExclude) {
+    private void broadcastMsg(Serializable msg) {
         for (ActorRef replica : group) {
-            if (!replicasToExclude.contains(replica)) {
-                if(msg instanceof WriteOKMessage && currentSeqNumber % 4 == 0 &&
-                        (replica!= null && replica.equals(group.get(5)))){
-                    this.crash();
-                    return;
-                }
+            if (replica != null && !replica.equals(getSelf())) {
                 sendMessage(replica, msg);
             }
         }
@@ -367,11 +372,11 @@ public class Replica extends AbstractActor {
 
     /**
      * Simple implementation of Akka Scheduler to set timeout based on if it will be recurrent or not
-     * @param millis time before scheduling, used also as interval
-     * @param destination destination of message on timer expiration
-     * @param msgToSend message to send
-     * @param isRecurrent if true set the interval and the timeout, otherwise only the timeout
-     * @return
+     * @param millis : time before scheduling, used also as interval
+     * @param destination : destination of message on timer expiration
+     * @param msgToSend : message to send
+     * @param isRecurrent : if true set the interval and the timeout, otherwise only the timeout
+     * @return the Cancellable instance of new timer
      */
     private Cancellable setTimeout(int millis, ActorRef destination, Serializable msgToSend, boolean isRecurrent) {
         if(isRecurrent){
@@ -397,71 +402,54 @@ public class Replica extends AbstractActor {
 
     /**
      * Retrieve the next not null replica in the ring and send the Election Message.
-     * Then initialize a timer in case of Replica not responding sending an IsDead message
+     * In case of no more replica available throw and Exception (this is used only as fallback
+     * but should never happen since the assumption guarantees N/2+1 Replicas always active)
+     * Finally initialize a timer that in case of Replica not responding sends an IsDead message
      * @param msg Election message to send
      */
     private void sendElectionToNextReplica(ElectionMsg msg) {
-
         int index = 0;
         ActorRef nextNonNullReplica;
         do {
             index++;
-            System.out.println("Next not null replica: " + id + " + " + index + " size: " + group.size());
             nextNonNullReplica = group.get((id + index) % group.size());
-
             if (index > group.size()) {
                 crash();
                 throw new RuntimeException("Replica" + id + ": there aren't any alive replicas");
             }
-
         } while (nextNonNullReplica == null);
 
         sendMessage(nextNonNullReplica, msg);
+
+        if (id == 1)
+            crash();
+
         if(electionTimer != null) {
             electionTimer.cancel();
         }
-
-        IsDeadMsg isDead = new IsDeadMsg((id + index) % group.size(), msg.lastSequenceNumberPerActor);
+        IsDeadMsg isDead = new IsDeadMsg((id + index) % group.size(), msg.lastSequenceNumberPerActor, msg.TTL);
         electionTimer = setTimeout(MAX_ELECTION_TIMEOUT, getSelf(), isDead, false);
     }
 
     /**
-     * Simulate a network delay before sending a message
-     * @param destination the Replica to send the message
-     * @param message any type of message defined in the system
+     * If sender not crashed and destination defined, send a message simulating a network delay
+     * @param destination : the Replica to which send the message
+     * @param message : any type of message defined in the system
      */
     private void sendMessage(ActorRef destination, Serializable message){
-        if (this.isCrashed)
-            return;
-
         int networkDelay = (int) (Math.random() * MAX_NETWORK_DELAY);
         try {
             Thread.sleep(networkDelay);
         } catch (InterruptedException ignored) {}
-
-        if (destination != null) {
-            System.out.println("Sending message from " + getSelf().path().name() + " to " + destination.path().name() + ": " + message.getClass().getSimpleName());
-            if (message.getClass().getSimpleName().equals("AckMessage")){
-                AckMessage ack = (AckMessage) message;
-                System.out.println("ACK TYPE: " + ack.ackType);
-            }
+        if (destination != null && !this.isCrashed) {
             destination.tell(message, getSelf());
         }
     }
 
     /**
-     * When invoked stops the Replica and cancel all timers of that Replica
+     * When invoked cancel all timers and stop current Replica
      */
     private void crash(){
-        System.err.println("REPLICA " + id + " CRASHED!");
-
-        getContext().stop(getSelf());
-
-        //Cancel all the timers of the crashed replica
-        resetTimers();
-    }
-
-    private void resetTimers() {
         //Cancel all the timers of the crashed replica
         if (electionTimer != null)
             electionTimer.cancel();
@@ -471,16 +459,9 @@ public class Replica extends AbstractActor {
 
         for (Cancellable timer : updateRequestTimers.values())
             timer.cancel();
-    }
 
-    private void crashIfCoordinator(){
-        if (coordinator.equals(getSelf()))
-            this.crash();
-    }
-
-    private void crashIfReplica(int replicaID){
-        if (this.id == replicaID)
-            this.crash();
+        getContext().stop(getSelf());
+        System.err.println("ID: " + id + " has CRASHED");
     }
 
     /**
@@ -493,7 +474,7 @@ public class Replica extends AbstractActor {
         for (int i=0; i<group.size(); i++)
             list.add(-1);
 
-        return new ElectionMsg(list);
+        return new ElectionMsg(list, group.size() * 2);
     }
 
     /**
@@ -510,8 +491,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * If coordinator set timer to send IsAliveMsg, else set timer to initialize election
-     * @return
+     * If coordinator, set timer to send IsAliveMsg, otherwise set timer to initialize election
+     * @return Cancellable instance of timer
      */
     private Cancellable setIsAliveTimer(){
         if(coordinator.equals(getSelf())) {
@@ -521,6 +502,49 @@ public class Replica extends AbstractActor {
         else{
             return setTimeout(MAX_TIMEOUT * (id + 1), getSelf(), initializeElectionMessage(), false);
         }
+    }
+
+    /**
+     * Remove the coordinator from current Replica list of nodes since it crashed
+     */
+    private void removeCrashedCoordinator() {
+        for (int i=0; i<group.size(); i++) {
+            if (group.get(i) != null && group.get(i).equals(coordinator)) {
+                group.set(i, null);
+                coordinator = null;
+            }
+        }
+    }
+
+    /**
+     * Init current replica as new coordinator, stop election timer, broadcast SYNC with current Replica as coordinator and recover history of other Replicas.
+     * Finally setup the isAliveTimer
+     * @param lastSequenceNumberPerActor : list of last registered sequence number of each active replica
+     */
+    private void initializeNewCoordinator(List<Integer> lastSequenceNumberPerActor){
+
+        coordinator = getSelf();
+        currentEpoch++;
+        currentSeqNumber = 0;
+
+        if (electionTimer != null)
+            electionTimer.cancel();
+
+        SyncMsg syncMsg = new SyncMsg(getSelf());
+        broadcastMsg(syncMsg);
+
+        //Recovering history from most updated replica aka the new coordinator
+        for(int i=0; i<lastSequenceNumberPerActor.size(); i++){
+            if(group.get(i) != null
+                    && !group.get(i).equals(getSelf())
+                    && lastSequenceNumberPerActor.get(id) > lastSequenceNumberPerActor.get(i)
+                    && lastSequenceNumberPerActor.get(i) >= 0){
+                recoverHistory(lastSequenceNumberPerActor.get(i), group.get(i));
+            }
+        }
+
+        isElectionInProgress = false;
+        isAliveTimer = setIsAliveTimer();
     }
 
 }

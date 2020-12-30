@@ -15,7 +15,7 @@ public class Client extends AbstractActor {
 
     private int id;
     private final int MESSAGE_INTERVAL_SECONDS = 2;
-    private final int READ_TIMEOUT_SECONDS = 3;
+    private final int READ_TIMEOUT_SECONDS = 10;
 
     private List<ActorRef> replicaList;
     private Cancellable timeout = null;
@@ -112,6 +112,7 @@ public class Client extends AbstractActor {
     private void onClientReadTimeoutMessage(ClientReadTimeout message){
         System.out.println("[" + getSelf().path().name() + "] seems that replica " + message.getReplicaPosition() + " is not working properly. Removed from the replica list");
 
+        timeout = null;
         replicaList.remove(message.getReplicaPosition());
     }
 
