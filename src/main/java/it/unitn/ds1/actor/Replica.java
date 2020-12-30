@@ -78,7 +78,7 @@ public class Replica extends AbstractActor {
     /**
      * Invoked when we receive the initial message that contains the clients and replicas groups.
      * Init the List of ActorRef of this Replica and set as coordinator the first in the group.
-     * @param message : StartMessage from client
+     * @param message : StartMessage from main
      * */
     public void onStartMessage(StartMessage message){
         this.group = new ArrayList<>(message.getReplicaList());
@@ -142,12 +142,16 @@ public class Replica extends AbstractActor {
     public void onAckMsg(AckMessage msg) {
         switch (msg.ackType){
             case UPDATEREQUEST:
+                Pair<Integer, Cancellable> timerToRemove = null;
                 for(Pair<Integer,Cancellable> timer : updateRequestTimers){
-                    if(timer.getKey() == msg.value){
-                        timer.getValue().cancel();
-                        updateRequestTimers.remove(timer);
-                        break;
+                    if(timerToRemove == null && timer.getKey() == msg.value){
+                        timerToRemove = timer;
                     }
+                }
+
+                if (timerToRemove != null) {
+                    timerToRemove.getValue().cancel();
+                    updateRequestTimers.remove(timerToRemove);
                 }
                 break;
             case COORDUPDATEREQUEST:
@@ -233,7 +237,7 @@ public class Replica extends AbstractActor {
             if(getSelf().equals(group.get(maxIndex))){
 
                 initializeNewCoordinator(msg.lastSequenceNumberPerActor);
-                System.err.println("The new Coordinator is: " + getSelf().path().name() + "--- List of Replicas most recent sequence numbers: " + msg.lastSequenceNumberPerActor.toString());
+                System.err.println("The new Coordinator is: " + getSelf().path().name() + " --- List of Replicas most recent sequence numbers: " + msg.lastSequenceNumberPerActor.toString());
             }
             else {
                 ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL-1);
@@ -455,8 +459,8 @@ public class Replica extends AbstractActor {
 
         for (Pair<Integer, Cancellable> timer : updateRequestTimers) {
             timer.getValue().cancel();
-            updateRequestTimers.remove(timer);
         }
+        updateRequestTimers = new ArrayList<>();
 
         getContext().stop(getSelf());
         System.err.println(getSelf().path().name() + " has CRASHED");

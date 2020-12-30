@@ -17,13 +17,19 @@ public class Client extends AbstractActor {
     private int id;
     private final int MESSAGE_INTERVAL_SECONDS = 2;
     private final int READ_TIMEOUT_SECONDS = Main.N_REPLICAS;
+    private final int MAX_READ_ATTEMPTS = 2;
 
     private List<ActorRef> replicaList;
     private Cancellable timeout = null;
+    private byte [] readAttemptsPerReplica;
 
     private Client(int clientID){
         super();
         this.id = clientID;
+        this.readAttemptsPerReplica = new byte[Main.N_REPLICAS];
+
+        for (int i=0; i<readAttemptsPerReplica.length; i++)
+            readAttemptsPerReplica[i] = 0;
     }
 
     public static Props props(int clientID){
@@ -31,32 +37,27 @@ public class Client extends AbstractActor {
     }
 
     /**
-     * Returns the id of the client
-     * @return id
+     * Invoked when we receive the initial message that contains the clients and replicas groups.
+     * Init the List of ActorRef of this Replica and start a periodic timeout to send to itself a SendClientMessage
+     * @param message : StartMessage from main
      * */
-    public int getId(){ return id; }
-
-    /**
-     * Invoked at the beginning to initialize the client
-     * @param message
-     */
     private void onStartMessage(StartMessage message){
         this.replicaList = new ArrayList<>(message.getReplicaList());
 
         //Start the message scheduling
-        Cancellable timer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(id, TimeUnit.SECONDS),                   // when to start generating messages
-                Duration.create(MESSAGE_INTERVAL_SECONDS, TimeUnit.SECONDS),  // how frequently generate them
-                getSelf(),                                                    // destination actor reference
-                new SendClientMessage(),                                      // the message to send
-                getContext().system().dispatcher(),                           // system dispatcher
-                getSelf()                                                     // source of the message (myself)
+        getContext().system().scheduler().scheduleWithFixedDelay(
+            Duration.create(id, TimeUnit.SECONDS),                        // when to start generating messages
+            Duration.create(MESSAGE_INTERVAL_SECONDS, TimeUnit.SECONDS),  // how frequently generate them
+            getSelf(),                                                    // destination actor reference
+            new SendClientMessage(),                                      // the message to send
+            getContext().system().dispatcher(),                           // system dispatcher
+            getSelf()                                                     // source of the message (myself)
         );
     }
 
     /**
-    * Invoked when the client have to schedule a new request to one replica
-     * @param message
+    * Invoked when the client receives from itself a SendClientMessage to send a new request to one replica (read or update).
+     * @param message : the SendClientMessage sent by the recurrent timeout set in onStartMessage() method.
     * */
     private void onSendClientMessage(SendClientMessage message) {
 
@@ -96,8 +97,8 @@ public class Client extends AbstractActor {
     }
 
     /**
-    * Invoked when arrives a read response from a replica
-     * @param message
+    * Invoked when arrives a read response from a replica. It contains the read value.
+     * @param message : the message sent by the replica to which the client had sent the ReadRequestMessage
     * */
     private void onReadResponseMessage(ReadResponseMessage message){
         System.out.println("[" + getSelf().path().name() + "] read value " + message.getValue());
@@ -107,17 +108,23 @@ public class Client extends AbstractActor {
             timeout.cancel();
             timeout = null;
         }
+
+        //Reset it's read attempts
+        readAttemptsPerReplica[getIdFromString(getSender().path().name())] = 0;
     }
 
     /**
-     * Invoked when the read timeout expires
-     * @param message
+     * Invoked when the read timeout expires due to the fact the replica does not answer in time.
+     * @param message : the ClientReadTimeout message sent by the timeout set before sending the ReadRequestMessage to the replica
      * */
     private void onClientReadTimeoutMessage(ClientReadTimeout message){
-        System.err.println("[" + getSelf().path().name() + "] seems that replica " + message.getReplicaPosition() + " is not working properly. Removed from the replica list");
+        readAttemptsPerReplica[message.getReplicaPosition()]++;
+        if (readAttemptsPerReplica[message.getReplicaPosition()] == MAX_READ_ATTEMPTS) {
+            System.err.println("[" + getSelf().path().name() + "] Replica " + message.getReplicaPosition() + " removed from replicas list after " + MAX_READ_ATTEMPTS + " failed attempts");
+            replicaList.set(message.getReplicaPosition(), null);
+        }
 
         timeout = null;
-        replicaList.set(message.getReplicaPosition(), null);
     }
 
     /**
@@ -131,5 +138,18 @@ public class Client extends AbstractActor {
                 .match(ReadResponseMessage.class,   this::onReadResponseMessage)
                 .match(ClientReadTimeout.class,     this::onClientReadTimeoutMessage)
                 .build();
+    }
+
+    /**
+     * This method extrapolate the final integer characters of the input string and returns them as a byte value
+     * @param text : the input text (e.g., "replica12")
+     * @return byte value (e.g., 12)
+     * */
+    private static byte getIdFromString(String text){
+        for (int i=0; i<text.length(); i++)
+            if (text.charAt(i) >= '0' && text.charAt(i) <= '9')
+                return Byte.parseByte(text.substring(i));
+
+        return -1;
     }
 }
