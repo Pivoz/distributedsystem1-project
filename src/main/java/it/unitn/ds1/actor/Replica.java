@@ -113,7 +113,6 @@ public class Replica extends AbstractActor {
         if(!isElectionInProgress) {
             AckMessage ackMessage;
             if (coordinator.equals(getSelf())) {
-                //System.err.println("Update request received by coordinator: " + msg.value + " using ackId: " + ackId);
                 ack.put(ackId, 1);
                 ReplicaMessage update = new ReplicaMessage(currentEpoch, currentSeqNumber, msg.value, ackId);
                 ackId++;
@@ -128,7 +127,6 @@ public class Replica extends AbstractActor {
                 }
                 ackMessage = new AckMessage(msg.ackId, msg.value, AckType.COORDUPDATEREQUEST);
                 sendMessage(coordinator, ackMessage);
-                //System.err.println("Replica" + id + " sent the ACk to coordinator for value " + msg.value + " with ackId: " + msg.ackId);
             }
         }
     }
@@ -155,6 +153,10 @@ public class Replica extends AbstractActor {
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.id);
                 if(ackNumber == group.size()/2 + 1) {
+                    if(id == 0) {
+                        this.crash();
+                        return;
+                    }
                     ack.remove(msg.id);
                     currentSeqNumber++;
                     WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
@@ -224,14 +226,14 @@ public class Replica extends AbstractActor {
      * @param msg : Election message from an active Replica
      */
     private void onElectionMsg(ElectionMsg msg) {
-        System.err.println("Election msg delivered to: " + getSelf().path().name() + " is Election in progress: " + isElectionInProgress + " --- " + msg.lastSequenceNumberPerActor.toString() );
+        System.err.println(this.sender().path().name() + " delivered Election msg to " + getSelf().path().name() + ". Remaining TTL: " + msg.TTL);
         if(isElectionInProgress){
             Integer maxSeqNumber = Collections.max(msg.lastSequenceNumberPerActor);
             Integer maxIndex = msg.lastSequenceNumberPerActor.indexOf(maxSeqNumber);
             if(getSelf().equals(group.get(maxIndex))){
 
                 initializeNewCoordinator(msg.lastSequenceNumberPerActor);
-                System.err.println("Replica" + id + " ELECTED (" + coordinator.path().name() + ")");
+                System.err.println("The new Coordinator is: " + getSelf().path().name() + "--- List of Replicas most recent sequence numbers: " + msg.lastSequenceNumberPerActor.toString());
             }
             else {
                 ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL-1);
@@ -278,7 +280,7 @@ public class Replica extends AbstractActor {
 
         isAliveTimer = setIsAliveTimer();
 
-        System.err.println("NEW COORD FOR: Replica" + id + " is " + coordinator.path().name());
+        System.err.println("SYNC: New Coordinator for " + this.getSelf().path().name() + " is " + coordinator.path().name());
     }
 
     /**
@@ -457,7 +459,7 @@ public class Replica extends AbstractActor {
         }
 
         getContext().stop(getSelf());
-        System.err.println("ID: " + id + " has CRASHED");
+        System.err.println(getSelf().path().name() + " has CRASHED");
     }
 
     /**
@@ -493,7 +495,6 @@ public class Replica extends AbstractActor {
      */
     private Cancellable setIsAliveTimer(){
         if(coordinator.equals(getSelf())) {
-            System.out.println("COORDINATOR IS_ALIVE: " + id);
             return setTimeout(IS_ALIVE_TIMEOUT, getSelf(), new IsAliveMsg(), true);
         }
         else{
