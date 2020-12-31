@@ -157,10 +157,11 @@ public class Replica extends AbstractActor {
             case COORDUPDATEREQUEST:
                 int ackNumber = incrementAck(msg.id);
                 if(ackNumber == group.size()/2 + 1) {
-                    if(id == 0) {
-                        this.crash();
-                        return;
-                    }
+                    //TODO: instruction used to crash first replica (at the beginning the coordinator)
+                    //if(id == 0) {
+                    //    this.crash();
+                    //    return;
+                    //}
                     ack.remove(msg.id);
                     currentSeqNumber++;
                     WriteOKMessage ok = new WriteOKMessage(currentSeqNumber, msg.value);
