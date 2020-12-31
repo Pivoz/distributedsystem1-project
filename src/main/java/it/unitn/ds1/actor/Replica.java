@@ -241,7 +241,7 @@ public class Replica extends AbstractActor {
                 System.err.println("The new Coordinator is: " + getSelf().path().name() + " --- List of Replicas most recent sequence numbers: " + msg.lastSequenceNumberPerActor.toString());
             }
             else {
-                ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL-1);
+                ElectionMsg updatedElectionMsg = new ElectionMsg(msg.lastSequenceNumberPerActor, msg.TTL>0 ? msg.TTL-1 : group.size());
                 if(msg.TTL == 0) {
                     updatedElectionMsg.lastSequenceNumberPerActor.set(maxIndex, -1);
                 }
@@ -369,6 +369,11 @@ public class Replica extends AbstractActor {
     private void broadcastMsg(Serializable msg) {
         for (ActorRef replica : group) {
             if (replica != null && !replica.equals(getSelf())) {
+                //TODO: this crash
+                //if(msg instanceof  WriteOKMessage && group.get(5).equals(replica)){
+                //    this.crash();
+                //    return;
+                //}
                 sendMessage(replica, msg);
             }
         }
@@ -424,7 +429,11 @@ public class Replica extends AbstractActor {
         } while (nextNonNullReplica == null);
 
         sendMessage(nextNonNullReplica, msg);
-
+        //TODO: this crash
+        //if((group.get(1) != null && group.get(1).equals(getSelf())) || (group.get(2) != null && group.get(2).equals(getSelf())) && isElectionInProgress){
+        //    this.crash();
+        //    return;
+        //}
         if(electionTimer != null) {
             electionTimer.cancel();
         }
