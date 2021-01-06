@@ -66,14 +66,14 @@ public class Client extends AbstractActor {
             return;
         }
 
-        //Pr(read)=0.8, Pr(update)=0.2
+        //Pr(read)=0.9, Pr(update)=0.1
         int dice = (int) (Math.random() * 10);
         int replicaPosition;
         do {
             replicaPosition = (int) (Math.random() * replicaList.size());
         } while (replicaList.get(replicaPosition) == null);
 
-        if (dice < 8) {
+        if (dice < 9) {
             //If the timeout isn't null there is a pending operation -> skip
             if (timeout != null)
                 return;

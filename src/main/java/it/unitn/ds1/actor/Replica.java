@@ -236,7 +236,6 @@ public class Replica extends AbstractActor {
             Integer maxSeqNumber = Collections.max(msg.lastSequenceNumberPerActor);
             Integer maxIndex = msg.lastSequenceNumberPerActor.indexOf(maxSeqNumber);
             if(getSelf().equals(group.get(maxIndex))){
-
                 initializeNewCoordinator(msg.lastSequenceNumberPerActor);
                 System.err.println("The new Coordinator is: " + getSelf().path().name() + " --- List of Replicas most recent sequence numbers: " + msg.lastSequenceNumberPerActor.toString());
             }
